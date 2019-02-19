@@ -222,9 +222,9 @@ notifications of status updates to be collected.  The
 `--wait-after-create` flag turns on this behavior.
 
 
-## Statisics collected
+## Statistics collected
 
-The driver collects several Prometheus statics and makes them
+The driver collects several Prometheus statistics and makes them
 available at `http://localhost:9101/metrics`.  At the end of a run,
 the driver scrapes that to a file.
 
@@ -251,7 +251,7 @@ The driver also produces counters of successful and failed create and
 delete operations on NetworkAttachments: `successful_creates`,
 `failed_creates`, `successful_deletes`, and `failed_deletes`.
 
-At any gien moment, the number of existing NetworkAttachment objects is
+At any given moment, the number of existing NetworkAttachment objects is
 somewhere between `successful_creates - (successful_deletes +
 failed_deletes)` and `successful_creates + failed_creates -
 successful_deletes` (since the effect of a failed operation is not
