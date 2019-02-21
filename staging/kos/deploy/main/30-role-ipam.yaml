@@ -18,3 +18,9 @@ rules:
   - iplocks
   verbs:
   - "*"
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create

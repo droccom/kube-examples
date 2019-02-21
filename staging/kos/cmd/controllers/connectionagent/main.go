@@ -28,9 +28,10 @@ import (
 
 	"github.com/golang/glog"
 
-	k8scorev1 "k8s.io/api/core/v1"
+	k8scorev1api "k8s.io/api/core/v1"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubeclient "k8s.io/client-go/kubernetes"
+	k8sclient "k8s.io/client-go/kubernetes"
+	k8scorev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
@@ -115,15 +116,17 @@ func main() {
 	clientCfg.Burst = clientBurst
 	clientCfg = rest.AddUserAgent(clientCfg, nodeName)
 
+	var eventIfc k8scorev1client.EventInterface
 	pause := time.Second
 	for {
-		kubeClientset, err := kubeclient.NewForConfig(clientCfg)
-		var svc *k8scorev1.Service
+		k8sclientset, err := k8sclient.NewForConfig(clientCfg)
+		var svc *k8scorev1api.Service
 		if err != nil {
 			glog.Errorf("Failed to create Kubernetes clientset: %s\n", err.Error())
 			goto TryAgain
 		}
-		svc, err = kubeClientset.CoreV1().Services("example-com").Get("network-api", k8smetav1.GetOptions{})
+		eventIfc = k8sclientset.CoreV1().Events(k8scorev1api.NamespaceAll)
+		svc, err = k8sclientset.CoreV1().Services("example-com").Get("network-api", k8smetav1.GetOptions{})
 		if err != nil {
 			glog.Errorf("Failed to fetch network-api service: %s\n", err.Error())
 			goto TryAgain
@@ -161,7 +164,7 @@ func main() {
 	// TODO think whether the rate limiter parameters make sense
 	queue := workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), queueName)
 
-	ca := cactlr.NewConnectionAgent(nodeName, gonet.ParseIP(hostIP), kcs, queue, workers, netFabric, allowedProgramsSet)
+	ca := cactlr.NewConnectionAgent(nodeName, gonet.ParseIP(hostIP), kcs, eventIfc, queue, workers, netFabric, allowedProgramsSet)
 
 	glog.Infof("Connection Agent start, nodeName=%s, hostIP=%s, netFabric=%s, allowedProgramsSlice=%v, kubeconfig=%q, workers=%d, QPS=%d, burst=%d, blockProfileRate=%d, mutexProfileFraction=%d\n",
 		nodeName,
