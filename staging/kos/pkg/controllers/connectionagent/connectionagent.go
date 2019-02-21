@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	k8scorev1api "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfields "k8s.io/apimachinery/pkg/fields"
@@ -37,11 +38,14 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sutilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	k8swait "k8s.io/apimachinery/pkg/util/wait"
+	k8scorev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	k8scache "k8s.io/client-go/tools/cache"
+	k8seventrecord "k8s.io/client-go/tools/record"
 	k8sworkqueue "k8s.io/client-go/util/workqueue"
 
 	netv1a1 "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1"
 	kosclientset "k8s.io/examples/staging/kos/pkg/client/clientset/versioned"
+	kosscheme "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/scheme"
 	netvifc1a1 "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/typed/network/v1alpha1"
 	kosinformers "k8s.io/examples/staging/kos/pkg/client/informers/externalversions"
 	kosinternalifcs "k8s.io/examples/staging/kos/pkg/client/informers/externalversions/internalinterfaces"
@@ -140,6 +144,7 @@ type ConnectionAgent struct {
 	hostIP        gonet.IP
 	kcs           *kosclientset.Clientset
 	netv1a1Ifc    netvifc1a1.NetworkV1alpha1Interface
+	eventRecorder k8seventrecord.EventRecorder
 	queue         k8sworkqueue.RateLimitingInterface
 	workers       int
 	netFabric     netfabric.Interface
@@ -227,6 +232,7 @@ type LocalAttachmentState struct {
 func NewConnectionAgent(localNodeName string,
 	hostIP gonet.IP,
 	kcs *kosclientset.Clientset,
+	eventIfc k8scorev1client.EventInterface,
 	queue k8sworkqueue.RateLimitingInterface,
 	workers int,
 	netFabric netfabric.Interface,
@@ -335,12 +341,17 @@ func NewConnectionAgent(localNodeName string,
 
 	fabricNameCounts.With(prometheus.Labels{"fabric": netFabric.Name()}).Inc()
 	workerCount.Add(float64(workers))
+	eventBroadcaster := k8seventrecord.NewBroadcaster()
+	eventBroadcaster.StartLogging(glog.V(3).Infof)
+	eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
+	eventRecorder := eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "connection-agent", Host: localNodeName})
 
 	return &ConnectionAgent{
 		localNodeName:                        localNodeName,
 		hostIP:                               hostIP,
 		kcs:                                  kcs,
 		netv1a1Ifc:                           kcs.NetworkV1alpha1(),
+		eventRecorder:                        eventRecorder,
 		queue:                                queue,
 		workers:                              workers,
 		netFabric:                            netFabric,
@@ -754,10 +765,7 @@ func (ca *ConnectionAgent) processExistingAtt(att *netv1a1.NetworkAttachment) er
 	macAddrS, ifcName, statusErrs, pcer, err := ca.createOrUpdateIfc(attGuestIP,
 		attHostIP,
 		attVNI,
-		attNSN,
-		att.CreationTimestamp.Time,
-		att.Spec.PostCreateExec,
-		att.Spec.PostDeleteExec)
+		att)
 	if err != nil {
 		return err
 	}
@@ -942,8 +950,8 @@ func (ca *ConnectionAgent) updateVNStateAfterAttDeparture(attName string, vni ui
 
 // createOrUpdateIfc returns the MAC address, Linux interface name,
 // post-create exec report, and possibly an error
-func (ca *ConnectionAgent) createOrUpdateIfc(attGuestIP, attHostIP gonet.IP, attVNI uint32, attNSN k8stypes.NamespacedName, creationTime time.Time, PostCreateExec, PostDeleteExec []string) (attMACStr, ifcName string, statusErrs kosutil.SliceOfString, pcer *netv1a1.ExecReport, err error) {
-
+func (ca *ConnectionAgent) createOrUpdateIfc(attGuestIP, attHostIP gonet.IP, attVNI uint32, att *netv1a1.NetworkAttachment) (attMACStr, ifcName string, statusErrs kosutil.SliceOfString, pcer *netv1a1.ExecReport, err error) {
+	attNSN := kosctlrutils.AttNSN(att)
 	attMAC := generateMACAddr(attVNI, attGuestIP)
 	attMACStr = attMAC.String()
 	ifcName = generateIfcName(attMAC)
@@ -981,7 +989,7 @@ func (ca *ConnectionAgent) createOrUpdateIfc(attGuestIP, attHostIP gonet.IP, att
 					GuestMAC: attMAC,
 					GuestIP:  attGuestIP,
 				},
-				PostDeleteExec: PostDeleteExec,
+				PostDeleteExec: att.Spec.PostDeleteExec,
 			}
 			tBeforeFabric := time.Now()
 			err := ca.netFabric.CreateLocalIfc(newLocalState.LocalNetIfc)
@@ -993,9 +1001,10 @@ func (ca *ConnectionAgent) createOrUpdateIfc(attGuestIP, attHostIP gonet.IP, att
 					newLocalState.LocalNetIfc,
 					err.Error())
 			}
-			ca.attachmentCreateToLocalIfcHistogram.Observe(tAfterFabric.Truncate(time.Second).Sub(creationTime).Seconds())
+			ca.attachmentCreateToLocalIfcHistogram.Observe(tAfterFabric.Truncate(time.Second).Sub(att.CreationTimestamp.Time).Seconds())
 			ca.setLocalAttMainState(attNSN, newLocalState)
-			statusErrs = ca.LaunchCommand(attNSN, &newLocalState.LocalNetIfc, PostCreateExec, "postCreateExec", true, true)
+			ca.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "Implemented", "Created Linux network interface named %s with MAC address %s and IPv4 address %s", newLocalState.Name, newLocalState.GuestMAC, newLocalState.GuestIP)
+			statusErrs = ca.LaunchCommand(attNSN, &newLocalState.LocalNetIfc, att.Spec.PostCreateExec, "postCreateExec", true, true)
 		} else {
 			newRemoteIfc := netfabric.RemoteNetIfc{
 				VNI:      attVNI,
@@ -1013,11 +1022,11 @@ func (ca *ConnectionAgent) createOrUpdateIfc(attGuestIP, attHostIP gonet.IP, att
 					newRemoteIfc,
 					err.Error())
 			}
-			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Truncate(time.Second).Sub(creationTime).Seconds())
+			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Truncate(time.Second).Sub(att.CreationTimestamp.Time).Seconds())
 			ca.assignRemoteIfc(attNSN, newRemoteIfc)
 		}
 	} else if attHasLocalIfc {
-		statusErrs = ca.LaunchCommand(attNSN, &oldLocalState.LocalNetIfc, PostCreateExec, "postCreateExec", false, true)
+		statusErrs = ca.LaunchCommand(attNSN, &oldLocalState.LocalNetIfc, att.Spec.PostCreateExec, "postCreateExec", false, true)
 		pcer = oldLocalState.PostCreateExecReport
 	}
 

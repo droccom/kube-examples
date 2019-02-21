@@ -29,15 +29,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	k8scorev1api "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sutilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	k8swait "k8s.io/apimachinery/pkg/util/wait"
+	k8scorev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	k8scache "k8s.io/client-go/tools/cache"
+	k8seventrecord "k8s.io/client-go/tools/record"
 	k8sworkqueue "k8s.io/client-go/util/workqueue"
 
 	netv1a1 "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1"
+	kosscheme "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/scheme"
 	kosclientv1a1 "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/typed/network/v1alpha1"
 	netlistv1a1 "k8s.io/examples/staging/kos/pkg/client/listers/network/v1alpha1"
 	kosctlrutils "k8s.io/examples/staging/kos/pkg/controllers/utils"
@@ -69,6 +73,7 @@ type IPAMController struct {
 	netattLister   netlistv1a1.NetworkAttachmentLister
 	lockInformer   k8scache.SharedIndexInformer
 	lockLister     netlistv1a1.IPLockLister
+	eventRecorder  k8seventrecord.EventRecorder
 	queue          k8sworkqueue.RateLimitingInterface
 	workers        int
 	attsMutex      sync.Mutex
@@ -122,8 +127,10 @@ func NewIPAMController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	netattLister netlistv1a1.NetworkAttachmentLister,
 	lockInformer k8scache.SharedIndexInformer,
 	lockLister netlistv1a1.IPLockLister,
+	eventIfc k8scorev1client.EventInterface,
 	queue k8sworkqueue.RateLimitingInterface,
-	workers int) (ctlr *IPAMController, err error) {
+	workers int,
+	hostname string) (ctlr *IPAMController, err error) {
 
 	attachmentCreateToLockHistogram := prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -183,6 +190,11 @@ func NewIPAMController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 
 	prometheus.MustRegister(attachmentCreateToLockHistogram, lockOpHistograms, attachmentCreateToAddressHistogram, attachmentUpdateHistograms, anticipationUsedHistogram, statusUsedHistogram)
 
+	eventBroadcaster := k8seventrecord.NewBroadcaster()
+	eventBroadcaster.StartLogging(glog.V(3).Infof)
+	eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
+	eventRecorder := eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "ipam", Host: hostname})
+
 	ctlr = &IPAMController{
 		netIfc:                             netIfc,
 		subnetInformer:                     subnetInformer,
@@ -191,6 +203,7 @@ func NewIPAMController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 		netattLister:                       netattLister,
 		lockInformer:                       lockInformer,
 		lockLister:                         lockLister,
+		eventRecorder:                      eventRecorder,
 		queue:                              queue,
 		workers:                            workers,
 		atts:                               make(map[k8stypes.NamespacedName]*NetworkAttachmentData),
@@ -656,6 +669,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 		tAfter := time.Now()
 		ctlr.lockOpHistograms.With(prometheus.Labels{"op": "create", "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 		if err == nil {
+			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			glog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s\n", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID))
 			ctlr.attachmentCreateToLockHistogram.Observe(ipl2.CreationTimestamp.Sub(att.CreationTimestamp.Time).Seconds())
 			break

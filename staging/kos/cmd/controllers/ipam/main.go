@@ -27,8 +27,10 @@ import (
 
 	"github.com/golang/glog"
 
-	"k8s.io/client-go/tools/clientcmd"
+	k8scorev1api "k8s.io/api/core/v1"
+	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
 
 	kosclientset "k8s.io/examples/staging/kos/pkg/client/clientset/versioned"
@@ -65,6 +67,19 @@ func main() {
 	}
 	clientCfg.QPS = float32(clientQPS)
 	clientCfg.Burst = clientBurst
+
+	kubeClientset, err := k8sclient.NewForConfig(clientCfg)
+	if err != nil {
+		glog.Errorf("Failed to configure k8s clientset: %s\n", err.Error())
+		os.Exit(4)
+	}
+	eventIfc := kubeClientset.CoreV1().Events(k8scorev1api.NamespaceAll)
+
+	{
+		cccopy := *clientCfg
+		clientCfg = &cccopy
+	}
+
 	clientCfg.Host = "network-api:443"
 	// TODO: give our apiservers verifiable identities
 	clientCfg.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
@@ -72,8 +87,14 @@ func main() {
 	kcs, err := kosclientset.NewForConfig(clientCfg)
 	if err != nil {
 		glog.Errorf("Failed to build KOS clientset for kubeconfig=%q: %s\n", kubeconfigFilename, err.Error())
-		os.Exit(3)
+		os.Exit(8)
 	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		glog.Errorf("Failed to get local hostname: %s\n", err.Error())
+		os.Exit(10)
+	}
+
 	stopCh := StopOnSignals()
 	sif := kosinformers.NewSharedInformerFactory(kcs, 0)
 	net1 := sif.Network().V1alpha1()
@@ -82,7 +103,7 @@ func main() {
 	lockInformer := net1.IPLocks()
 	sif.Start(stopCh)
 	queue := workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), "kos_ipam_controller_queue")
-	ctlr, err := ipamctlr.NewIPAMController(kcs.NetworkV1alpha1(), subnetInformer.Informer(), subnetInformer.Lister(), netattInformer.Informer(), netattInformer.Lister(), lockInformer.Informer(), lockInformer.Lister(), queue, workers)
+	ctlr, err := ipamctlr.NewIPAMController(kcs.NetworkV1alpha1(), subnetInformer.Informer(), subnetInformer.Lister(), netattInformer.Informer(), netattInformer.Lister(), lockInformer.Informer(), lockInformer.Lister(), eventIfc, queue, workers, hostname)
 	if err != nil {
 		glog.Errorf("Failed to initialize IPAM controller: %s\n", err.Error())
 		os.Exit(9)
