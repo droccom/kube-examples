@@ -1,5 +1,5 @@
-hash: 56d43f44fb1b2740a7304960af5513ef6da3fc62b5ba7d2b627bb32dbdfcab24
-updated: 2019-02-05T10:39:57.074126-05:00
+hash: 45146851e287b5c56392c954b20f8106bb28b26c610214079820e1dff9e40b1d
+updated: 2019-03-01T14:20:07.74323-05:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -132,6 +132,10 @@ imports:
   - sortkeys
 - name: github.com/golang/glog
   version: 44145f04b68cf362d9c4df2182967c2275eaefed
+- name: github.com/golang/groupcache
+  version: 02826c3e79038b59d737d3b1c0a1d937f71a4433
+  subpackages:
+  - lru
 - name: github.com/golang/protobuf
   version: b4deda0973fb4c70b50d226b1af49f3da59f5265
   subpackages:
@@ -284,7 +288,7 @@ imports:
   subpackages:
   - rate
 - name: google.golang.org/appengine
-  version: 2d2298565d5a399bdfec98dbc259d6393e3cf8ba
+  version: 54a98f90d1c46b7731eb8fb305d2a321c30ef610
   subpackages:
   - internal
   - internal/base
@@ -416,7 +420,7 @@ imports:
   - third_party/forked/golang/json
   - third_party/forked/golang/reflect
 - name: k8s.io/apiserver
-  version: 063b3905819b775547a6e9eb6072e89cd2875e7b
+  version: 555e87fe23df032915f4a62ce3f944488358af5f
   subpackages:
   - pkg/admission
   - pkg/admission/configuration
@@ -512,7 +516,7 @@ imports:
   - plugin/pkg/authenticator/token/webhook
   - plugin/pkg/authorizer/webhook
 - name: k8s.io/client-go
-  version: 701b913670036511e3d752318272c97f1a2a2edd
+  version: 77e032213d34c856222b4d4647c1c175ba8d22b9
   subpackages:
   - discovery
   - discovery/fake
@@ -637,6 +641,7 @@ imports:
   - tools/clientcmd/api/v1
   - tools/metrics
   - tools/pager
+  - tools/record
   - tools/reference
   - transport
   - util/buffer

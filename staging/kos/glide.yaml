@@ -59,6 +59,7 @@ import:
   - testing
   - tools/cache
   - tools/clientcmd
+  - tools/record
   - util/flowcontrol
   - util/workqueue
 - package: k8s.io/kube-openapi
