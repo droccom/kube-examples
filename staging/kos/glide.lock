@@ -1,5 +1,5 @@
-hash: 45146851e287b5c56392c954b20f8106bb28b26c610214079820e1dff9e40b1d
-updated: 2019-03-01T14:20:07.74323-05:00
+hash: 291e991d2d0c4fd1e6030abc4feb7f685df4b46dbff43b8e5fc95fd6564fa30e
+updated: 2019-03-01T14:28:42.941102-05:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -114,7 +114,7 @@ imports:
 - name: github.com/emicklei/go-restful-swagger12
   version: dcef7f55730566d41eae5db10e7d6981829720f6
 - name: github.com/evanphx/json-patch
-  version: 36442dbdb585210f8d5a1b45e67aa323c197d5c4
+  version: 5858425f75500d40c52783dce87d085a483ce135
 - name: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-openapi/jsonpointer
@@ -364,7 +364,7 @@ imports:
   - storage/v1alpha1
   - storage/v1beta1
 - name: k8s.io/apimachinery
-  version: 49ce2735e5074ffc3f8190c8406cf51a96302dad
+  version: 01f179d85dbce0f2e0e4351a92394b38694b7cae
   subpackages:
   - pkg/api/apitesting
   - pkg/api/apitesting/fuzzer
