@@ -195,7 +195,7 @@ type ConnectivityDomain struct {
 	pendingIndices map[int]struct{}
 }
 
-// NoteTested records the given index to be the latest oen to have been tested.
+// NoteTested records the given index to be the latest one to have been tested.
 // Called while holding the Slot's mutex.
 func (cd *ConnectivityDomain) NoteTested(slotIndex int) {
 	if cd == nil {
