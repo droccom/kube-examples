@@ -45,7 +45,6 @@ import (
 	k8sv1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apimachinerytypes "k8s.io/apimachinery/pkg/types"
 	kubeclient "k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 	"k8s.io/client-go/tools/clientcmd"
@@ -138,8 +137,6 @@ func NewTrackingHistogram(opts prometheus.HistogramOpts) TrackingHistogram {
 
 var theKubeNS string
 
-type NamespacedName struct{ Namespace, Name string }
-
 var multiOwnerWarnings uint32
 
 type VirtNet struct {
@@ -167,7 +164,7 @@ type VirtNet struct {
 	// Do not try to acquire an Slot's mutex while holding this mutex.
 	nodeMutex sync.Mutex
 
-	// nodeMap maps node name to node data relevant to this namespace
+	// nodeMap maps node name to node data relevant to this Virtual Network
 	nodeMap map[string]*NodeData
 }
 
@@ -177,7 +174,7 @@ type NodeData struct {
 }
 
 // ConnectivityDomain holds the testing information tracked for a virtual
-// network.  Its lock may be acquired while holding a Slot's lock, not
+// network. Its lock may be acquired while holding a Slot's lock, not
 // the other way around.
 type ConnectivityDomain struct {
 	//	name string
@@ -198,7 +195,7 @@ type ConnectivityDomain struct {
 	pendingIndices map[int]struct{}
 }
 
-// NoteTested records the given index.
+// NoteTested records the given index to be the latest oen to have been tested.
 // Called while holding the Slot's mutex.
 func (cd *ConnectivityDomain) NoteTested(slotIndex int) {
 	if cd == nil {
@@ -211,7 +208,7 @@ func (cd *ConnectivityDomain) NoteTested(slotIndex int) {
 	cd.Unlock()
 }
 
-// NotePending removes the given index.
+// NotePending records the given index amongst those of pending slots.
 // Called while holding the Slot's mutex.
 func (cd *ConnectivityDomain) NotePending(slotIndex int) {
 	if cd == nil {
@@ -240,10 +237,10 @@ func (cd *ConnectivityDomain) NoteNoTest(slotIndex int) {
 }
 
 // GetReadyAttachment returns, if reasonably possible, the most recently
-// ready NetworkAttachment in the connectivity domain.  If there is none
+// ready NetworkAttachment in the connectivity domain. If there is none
 // at entry time, but there are some NetworkAttachments that have been
 // created but not yet reached their main state, then this procedure
-// will wait up to a configured limit for one to become ready.  Called
+// will wait up to a configured limit for one to become ready. Called
 // while holding the Slot's mutex.
 func (cd *ConnectivityDomain) GetReadyAttachment(virtNet *VirtNet) (natt *netv1a1.NetworkAttachment, delay, totalDelay time.Duration) {
 	cd.Lock()
@@ -324,7 +321,7 @@ func (slot *Slot) setCurrentName(slotIndex int, currentAttachmentName, currentNo
 }
 
 // setNetAtt updates an attachment slot for a freshly created attachment
-func (slot *Slot) setNetAtt(virtNet *VirtNet, slotIndex int, preCreateTime, postCreateTime time.Time, natt *netv1a1.NetworkAttachment, fullTest bool) {
+func (slot *Slot) setNetAtt(preCreateTime, postCreateTime time.Time, natt *netv1a1.NetworkAttachment, fullTest bool) {
 	slot.Mutex.Lock()
 	defer func() { slot.Mutex.Unlock() }()
 	slot.preCreateTime = preCreateTime
@@ -374,7 +371,7 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			glog.Infof("Attachment became ready: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, preCreateTime=%s, addressedTime=%s, readyTime=%s, ifcName=%s, MAC=%s, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, slot.preCreateTime.Format(kosutil.RFC3339Milli), slot.addressedTime.Format(kosutil.RFC3339Milli), slot.readyTime.Format(kosutil.RFC3339Milli), natt.Status.IfcName, natt.Status.MACAddress, natt.Status.IPv4)
 			if *waitAfterCreate != 0 {
 				count := atomic.AddUint32(&readyCount, 1)
-				rem := uint32(*num_attachments) - count
+				rem := uint32(*numAttachments) - count
 				if rem&(rem-1) == 0 {
 					glog.Warningf("Number remaining = %d\n", rem)
 				}
@@ -521,7 +518,7 @@ type VirtNetAttachment struct {
 	vnIndex, slotIndex int
 }
 
-var num_subnets int
+var numSubnets int
 
 var virtNets []VirtNet
 var idToVirtNet = make(map[uint32]*VirtNet)
@@ -586,30 +583,30 @@ func (eeh *attachmentEventHandler) OnDelete(obj interface{}) {
 func waitForInitializedSubnets() {
 	initializedSubnetsMutex.Lock()
 	defer func() { initializedSubnetsMutex.Unlock() }()
-	for len(initializedSubnets) < num_subnets {
+	for len(initializedSubnets) < numSubnets {
 		initializedSubnetsChanged.Wait()
 	}
 	return
 }
 
 var addr0S = flag.String("base-address", "172.24.0.0", "Start of IP address range to use")
-var num_nets = flag.Int("num-nets", 10, "Number of namespaces to use")
-var top_net_size = flag.Int("top-net-size", 100, "Largest number of slots in a virtual network")
-var law_power = flag.Float64("exponent", 1, "exponent in power law")
-var law_bias = flag.Int("bias", 0, "bias in power law")
-var just_count = flag.Bool("estimate", false, "only characterize the network size distribution")
+var numNets = flag.Int("num-nets", 10, "Number of virtual networks to use")
+var topNetSize = flag.Int("top-net-size", 100, "Largest number of slots in a virtual network")
+var lawPower = flag.Float64("exponent", 1, "exponent in power law")
+var lawBias = flag.Int("bias", 0, "bias in power law")
+var justCount = flag.Bool("estimate", false, "only characterize the network size distribution")
 var roundRobin = flag.Bool("round-robin", false, "pick Nodes round-robin")
 var singleNetwork = flag.Bool("single-network", false, "indicates whether to make only one Subnet in each VirtNet")
 var omitTest = flag.Bool("omit-test", false, "indicates whether to avoid functional testing of the created attachments")
 var pendingWait = flag.Duration("pending-wait", time.Minute, "max time a thread will wait for a pending attachment to become ready")
 var pingCount = flag.Int("ping-count", 10, "number of ping requests in a full test")
-var stopOnPingFail = flag.Bool("stop-on-ping-fail", true, "stop diriving as soon as one ping test fails")
+var stopOnPingFail = flag.Bool("stop-on-ping-fail", true, "stop driving as soon as one ping test fails")
 
 var stopOnBreak = flag.Bool("stop-on-break", true, "stop driving as soon as breakage is observed")
 var waitAfterCreate = flag.Duration("wait-after-create", 0, "if non-zero, wait this amount of time and then exit after creating all the attachments")
 var waitAfterDelete = flag.Duration("wait-after-delete", 15*time.Second, "time to wait for notifications after last deletion")
 var kubeconfigPath = flag.String("kubeconfig", "", "Path to kubeconfig file")
-var num_attachments = flag.Int("num-attachments", 450, "Total number of attachments to create")
+var numAttachments = flag.Int("num-attachments", 450, "Total number of attachments to create")
 var threads = flag.Uint64("threads", 1, "Total number of threads to use")
 var targetRate = flag.Float64("rate", 10, "Target aggregate rate, in ops/sec")
 var subnetSizeFactor = flag.Float64("subnet-size-factor", 1.0, "size each subnet for this factor times the number of addresses needed")
@@ -654,9 +651,9 @@ func main() {
 		os.Exit(5)
 	}
 
-	glog.Warningf("Driver parameters: num_nets=%d, top_net_size=%d, subnetSizeFactor=%g, law_powr=%g, law_bias=%d, just_count=%v, roundRobin=%v, pendingWait=%s, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, num_attachments=%d, threads=%d, targetRate=%g, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", *num_nets, *top_net_size, *subnetSizeFactor, *law_power, *law_bias, *just_count, *roundRobin, *pendingWait, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *num_attachments, *threads, *targetRate, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
+	glog.Warningf("Driver parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
 
-	vni0 := rand.Intn(32)*65536 + 1 // allow 64K VNIs in a run without overflowing the 21 bit limit
+	vni0 := rand.Intn(32)*65536 + 1 // allow 64Ki VNIs in a run without overflowing the 21 bit limit
 	glog.Warningf("First VNI is %06x\n", vni0)
 
 	distributionFilename := filepath.Join(outputDir, "size-distribution.csv")
@@ -671,7 +668,7 @@ func main() {
 	var kClientset *kosclientset.Clientset
 	var netsDirect netclientv1a1.SubnetInterface
 
-	if !*just_count {
+	if !*justCount {
 		/* connect to the API server */
 		config, err := clientcmd.BuildConfigFromFlags("", *kubeconfigPath)
 		if err != nil {
@@ -704,12 +701,12 @@ func main() {
 		netsDirect = kClientset.NetworkV1alpha1().Subnets(theKubeNS)
 	}
 
-	virtNets = make([]VirtNet, *num_nets)
+	virtNets = make([]VirtNet, *numNets)
 	breakPoint := 0
 	var sizeSum, squareSum float64
 	addr01I := kosutil.MakeUint32FromIPv4(addr0)
-	for i := 0; i < *num_nets; i++ {
-		sz := math.Ceil(float64(1+*law_bias) * float64(*top_net_size) / math.Pow(float64(i+1+*law_bias), *law_power))
+	for i := 0; i < *numNets; i++ {
+		sz := math.Ceil(float64(1+*lawBias) * float64(*topNetSize) / math.Pow(float64(i+1+*lawBias), *lawPower))
 		if sz < 1 {
 			sz = 1
 		}
@@ -730,7 +727,7 @@ func main() {
 		VNI := uint32(vni0+i) & 0x1FFFFF
 		var subnets []*netv1a1.Subnet
 		var cd *ConnectivityDomain
-		if !*just_count {
+		if !*justCount {
 			cd = &ConnectivityDomain{VNI: VNI, pendingIndices: make(map[int]struct{}), latestIndex: -1}
 			cd.change = sync.NewCond(cd)
 			net1name := fmt.Sprintf("%06x-a", VNI)
@@ -751,9 +748,8 @@ func main() {
 				glog.Errorf("Failed to create Subnet %s/%s, VNI=%06x, err=%s\n", theKubeNS, net1name, VNI, err.Error())
 				os.Exit(26)
 			}
-			num_subnets++
+			numSubnets++
 			subnets = []*netv1a1.Subnet{net1}
-			netRefs := []apimachinerytypes.NamespacedName{{theKubeNS, net1name}}
 			subnetCIDRs := []string{net1.Spec.IPv4}
 			var net2 *netv1a1.Subnet
 			if nsz2 > 0 {
@@ -775,9 +771,8 @@ func main() {
 					glog.Errorf("Failed to create Subnet %s/%s, VNI=%06x, err=%s\n", theKubeNS, net2name, VNI, err.Error())
 					os.Exit(27)
 				}
-				num_subnets++
+				numSubnets++
 				subnets = append(subnets, net2)
-				netRefs = append(netRefs, apimachinerytypes.NamespacedName{theKubeNS, net2name})
 				subnetCIDRs = append(subnetCIDRs, net2.Spec.IPv4)
 			}
 			glog.Infof("VirtNet created: VNI=%06x, size=%d, subnetCIDRs=%#+v\n", VNI, nsz, subnetCIDRs)
@@ -811,9 +806,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	for i := 0; i < *num_nets; i++ {
+	for i := 0; i < *numNets; i++ {
 		if i == 0 || virtNets[i].size != virtNets[i-1].size ||
-			i+1 == *num_nets || virtNets[i].size != virtNets[i+1].size {
+			i+1 == *numNets || virtNets[i].size != virtNets[i+1].size {
 			distributionOutlineCSVFile.Write([]byte(fmt.Sprintf("%d,%d\n", i+1, virtNets[i].size)))
 		}
 	}
@@ -822,13 +817,13 @@ func main() {
 	avgPeers := squareSum / sizeSum
 	glog.Warningf("VirtNet size distribution: numSlots=%d, avgPeers=%g, breakPoint=%d\n", nneI, avgPeers, breakPoint)
 
-	if *just_count {
+	if *justCount {
 		return
 	}
 
 	if *waitAfterCreate != 0 {
-		if *num_attachments > nneI {
-			glog.Errorf("Requested too many attachments, can not create them all without deleting: numSlots=%d, numAttachments=%d\n", nneI, *num_attachments)
+		if *numAttachments > nneI {
+			glog.Errorf("Requested too many attachments, can not create them all without deleting: numSlots=%d, numAttachments=%d\n", nneI, *numAttachments)
 			os.Exit(27)
 		}
 	}
@@ -950,7 +945,7 @@ func main() {
 	}
 	vnAttachments = make([]VirtNetAttachment, nneI)
 	k := 0
-	for i := 0; i < *num_nets; i++ {
+	for i := 0; i < *numNets; i++ {
 		for j := 0; j < virtNets[i].size; j++ {
 			vnAttachments[k] = VirtNetAttachment{i, j}
 			k++
@@ -991,10 +986,10 @@ func main() {
 	attachmentInformer.AddEventHandler(&attachmentEventHandler{})
 	go func() { networkInformer.Run(stopCh) }()
 	go func() { attachmentInformer.Run(stopCh) }()
-	glog.Warningf("Namespace and Subnets created, waiting for notifications; num_subnets=%d\n", num_subnets)
+	glog.Warningf("Namespace and Subnets created, waiting for notifications; numSubnets=%d\n", numSubnets)
 	waitForInitializedSubnets()
 	glog.Warningln("Notified of all subnets")
-	nattDigits := 1 + int(math.Floor(math.Log10(float64(*num_attachments))))
+	nattDigits := 1 + int(math.Floor(math.Log10(float64(*numAttachments))))
 	nattNameFmt := fmt.Sprintf("%%06x-%%0%dd", nattDigits)
 
 	// Serve Prometheus metrics
@@ -1006,8 +1001,8 @@ func main() {
 	var wg sync.WaitGroup
 	opPeriod := 1 / *targetRate
 	effN := nneI
-	if effN > *num_attachments {
-		effN = *num_attachments
+	if effN > *numAttachments {
+		effN = *numAttachments
 	}
 	if *waitAfterCreate == 0 {
 		minLifetime := float64((uint64(effN) / *threads)*(*threads)) * opPeriod
@@ -1022,9 +1017,9 @@ func main() {
 		wg.Add(1)
 		go func(thd uint64) {
 			defer wg.Done()
-			numHere := (uint64(*num_attachments) + *threads - 1 - thd) / (*threads)
-			work := selectWork(int(thd), int(*threads), vnAttachments)
-			RunThread(kClientset, stopCh, work, nodeList.Items, nattNameFmt, *runID, t0, numHere, thd+1, *threads, opPeriod, *roundRobin, *waitAfterCreate != 0)
+			numAttsToCreate := (uint64(*numAttachments) + *threads - 1 - thd) / (*threads)
+			slots := selectSlots(int(thd), int(*threads), vnAttachments)
+			RunThread(kClientset, stopCh, slots, nodeList.Items, nattNameFmt, *runID, t0, numAttsToCreate, thd+1, *threads, opPeriod, *roundRobin, *waitAfterCreate != 0)
 		}(i)
 	}
 	wg.Wait()
@@ -1057,23 +1052,13 @@ func main() {
 	return
 }
 
-func selectWork(thd, num_threads int, frum []VirtNetAttachment) []VirtNetAttachment {
-	// thd+i*num_threads < len(frum)
-	// i < (len(frum)-thd)/num_threads
-	ans := make([]VirtNetAttachment, (len(frum)+num_threads-1-thd)/num_threads)
-	for i := 0; i < len(ans); i++ {
-		ans[i] = frum[thd+i*num_threads]
-	}
-	return ans
-}
-
 func shuffle(x []VirtNetAttachment) []VirtNetAttachment {
 	if x == nil || len(x) < 2 {
 		return x
 	}
 	ans := make([]VirtNetAttachment, len(x))
 	rem := len(x)
-	for i := 0; i+1 < len(x); i++ {
+	for i := 0; i < len(x); i++ {
 		j := rand.Intn(rem)
 		ans[i] = x[j]
 		rem--
@@ -1081,21 +1066,29 @@ func shuffle(x []VirtNetAttachment) []VirtNetAttachment {
 			x[j] = x[rem]
 		}
 	}
-	ans[len(x)-1] = x[0]
 	return ans
 }
 
-func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, tbase time.Time, n, thd, stride uint64, opPeriod float64, roundRobin, justCreate bool) {
-	glog.Warningf("Thread start: thd=%d, numAttachments=%d, stride=%d\n", thd, n, stride)
+func selectSlots(thd, numThreads int, from []VirtNetAttachment) []VirtNetAttachment {
+	// thd+i*numThreads < len(from)
+	// i < (len(from)-thd)/numThreads
+	assignedSlots := make([]VirtNetAttachment, (len(from)+numThreads-1-thd)/numThreads)
+	for i := 0; i < len(assignedSlots); i++ {
+		assignedSlots[i] = from[thd+i*numThreads]
+	}
+	return assignedSlots
+}
+
+func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, tbase time.Time, numAttsToCreate, thd, numThreads uint64, opPeriod float64, roundRobin, justCreate bool) {
+	glog.Warningf("Thread start: thd=%d, numAttachments=%d, stride=%d\n", thd, numAttsToCreate, numThreads)
 	var iCreate, iDelete uint64
 	var workLen = uint64(len(work))
-	attachmentsGetter := kClientset.NetworkV1alpha1()
-	attachmentsDirect := attachmentsGetter.NetworkAttachments(theKubeNS)
+	attachmentsDirect := kClientset.NetworkV1alpha1().NetworkAttachments(theKubeNS)
 	createAllowed := true
-	for iDelete < n {
+	for iDelete < numAttsToCreate {
 		for {
 			xd := atomic.AddInt64(&xtraDelayI, 0)
-			dt := float64((iCreate+iDelete)*stride+thd) * opPeriod * float64(time.Second)
+			dt := float64((iCreate+iDelete)*numThreads+thd) * opPeriod * float64(time.Second)
 			targt := tbase.Add(time.Duration(int64(dt) + xd))
 			now := time.Now()
 			if !targt.After(now) {
@@ -1115,7 +1108,7 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 			default:
 			}
 		}
-		if createAllowed && iCreate < iDelete+workLen && iCreate < n {
+		if createAllowed && iCreate < iDelete+workLen && iCreate < numAttsToCreate {
 			virtNet := &virtNets[work[iCreate%workLen].vnIndex]
 			slotIndex := work[iCreate%workLen].slotIndex
 			slotIndexS := fmt.Sprintf("%d", slotIndex)
@@ -1125,12 +1118,12 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 				indexInVirtNet := atomic.AddUint32(&virtNet.createdCount, 1)
 				subnet = virtNet.subnets[indexInVirtNet%uint32(len(virtNet.subnets))]
 			}
-			objname := fmt.Sprintf(nattNameFmt, virtNet.ID, slot.nextIndex)
+			nattName := fmt.Sprintf(nattNameFmt, virtNet.ID, slot.nextIndex)
 			var nodeName string
 			if *onlyNode != "" {
 				nodeName = *onlyNode
 			} else if roundRobin {
-				node := &nodes[(thd+stride*iCreate)%uint64(len(nodes))]
+				node := &nodes[(thd+numThreads*iCreate)%uint64(len(nodes))]
 				nodeName = node.Name
 			} else {
 				node := &nodes[rand.Intn(len(nodes))]
@@ -1155,16 +1148,16 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 					if peer != nil {
 						peerName = peer.Name
 					}
-					glog.Warningf("Waited for ready peer: VNI=%06x, waiter=%s, peerName=%s, wait=%s, totalDelay=%s\n", cd.VNI, objname, peerName, delay, totalDelay)
+					glog.Warningf("Waited for ready peer: VNI=%06x, waiter=%s, peerName=%s, wait=%s, totalDelay=%s\n", cd.VNI, nattName, peerName, delay, totalDelay)
 				}
 			}
-			slot.setCurrentName(slotIndex, objname, nodeName, cd)
+			slot.setCurrentName(slotIndex, nattName, nodeName, cd)
 			ti0 := time.Now()
 			ti0S := ti0.Format(kosutil.TimestampLayout)
 			notes[kosutil.CreateTimestampAnnotationKey] = ti0S
-			obj := netv1a1.NetworkAttachment{
+			natt := netv1a1.NetworkAttachment{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        objname,
+					Name:        nattName,
 					Namespace:   theKubeNS,
 					Labels:      map[string]string{"app": "attachment-tput-driver", "runid": runID},
 					Annotations: notes,
@@ -1176,18 +1169,18 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 					PostDeleteExec: postDeleteExec,
 				},
 			}
-			retObj, err := attachmentsDirect.Create(&obj)
+			retNatt, err := attachmentsDirect.Create(&natt)
 			tif := time.Now()
 			opLatency := tif.Sub(ti0).Seconds()
-			createLatencyHistogram.ObserveAt(opLatency, theKubeNS, objname)
+			createLatencyHistogram.ObserveAt(opLatency, theKubeNS, nattName)
 			if err != nil {
 				slot.setCurrentName(slotIndex, "", "", cd)
 				failedCreates.Inc()
-				glog.Infof("Failed to create NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, preCreateTime=%s, err=%s\n", theKubeNS, objname, virtNet.ID, subnet.Name, nodeName, ti0.Format(kosutil.RFC3339Milli), err.Error())
+				glog.Infof("Failed to create NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, preCreateTime=%s, err=%s\n", theKubeNS, nattName, virtNet.ID, subnet.Name, nodeName, ti0.Format(kosutil.RFC3339Milli), err.Error())
 			} else {
-				slot.setNetAtt(virtNet, slotIndex, ti0, tif, retObj, fullTest)
+				slot.setNetAtt(ti0, tif, retNatt, fullTest)
 				successfulCreates.Inc()
-				glog.Infof("Created NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, RV=%s, preCreateTime=%s, postCreateTime=%s\n", theKubeNS, objname, virtNet.ID, subnet.Name, nodeName, retObj.ResourceVersion, ti0.Format(kosutil.RFC3339Milli), tif.Format(kosutil.RFC3339Milli))
+				glog.Infof("Created NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, RV=%s, preCreateTime=%s, postCreateTime=%s\n", theKubeNS, nattName, virtNet.ID, subnet.Name, nodeName, retNatt.ResourceVersion, ti0.Format(kosutil.RFC3339Milli), tif.Format(kosutil.RFC3339Milli))
 			}
 			iCreate++
 		} else if justCreate {
@@ -1197,8 +1190,8 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 			slot := &virtNet.slots[work[iDelete%workLen].slotIndex]
 			natt := slot.close(virtNet.ID, theKubeNS)
 			tryDelete := func() bool {
-				ti0 := time.Now()
 				delopts := metav1.DeleteOptions{}
+				ti0 := time.Now()
 				err := attachmentsDirect.Delete(natt.Name, &delopts)
 				tif := time.Now()
 				opLatency := tif.Sub(ti0).Seconds()
@@ -1207,11 +1200,10 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 					failedDeletes.Inc()
 					glog.Infof("Failed to delete NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, preDeleteTime=%s, ipv4=%s, err=%s\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.Spec.Node, ti0.Format(kosutil.RFC3339Milli), natt.Status.IPv4, err.Error())
 					return false
-				} else {
-					successfulDeletes.Inc()
-					glog.Infof("Deleted NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, preDeleteTime=%s, ipv4=%s\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.Spec.Node, ti0.Format(kosutil.RFC3339Milli), natt.Status.IPv4)
-					return true
 				}
+				successfulDeletes.Inc()
+				glog.Infof("Deleted NetworkAttachment: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, preDeleteTime=%s, ipv4=%s\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.Spec.Node, ti0.Format(kosutil.RFC3339Milli), natt.Status.IPv4)
+				return true
 			}
 			if natt != nil {
 				withRetries(tryDelete, 100*time.Millisecond, 5*time.Second, stopCh)
@@ -1248,8 +1240,7 @@ func saveProMetrics(config promapi.Config, outputDir string) {
 		glog.Errorf("Failed to form Prometheus request: url=%q: %s\n", url, err.Error())
 		return
 	}
-	var ctx context.Context = context.Background()
-	_, body, err := client.Do(ctx, request)
+	_, body, err := client.Do(context.Background(), request)
 	if err != nil {
 		glog.Errorf("Failed to fetch Prometheus metrics from self: url=%q: %s\n", url, err.Error())
 		return
