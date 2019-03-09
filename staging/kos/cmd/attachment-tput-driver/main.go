@@ -1131,8 +1131,7 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 			}
 			notes := map[string]string{slotKey: slotIndexS}
 			var postCreateExec, postDeleteExec []string
-			var cd *ConnectivityDomain
-			cd = virtNet.theCD
+			cd := virtNet.theCD
 			fullTest := false
 			if !*omitTest {
 				peer, delay, totalDelay := cd.GetReadyAttachment(virtNet)
@@ -1190,9 +1189,8 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 			slot := &virtNet.slots[work[iDelete%workLen].slotIndex]
 			natt := slot.close(virtNet.ID, theKubeNS)
 			tryDelete := func() bool {
-				delopts := metav1.DeleteOptions{}
 				ti0 := time.Now()
-				err := attachmentsDirect.Delete(natt.Name, &delopts)
+				err := attachmentsDirect.Delete(natt.Name, &metav1.DeleteOptions{})
 				tif := time.Now()
 				opLatency := tif.Sub(ti0).Seconds()
 				deleteLatencyHistogram.ObserveAt(opLatency, theKubeNS, natt.Name)
