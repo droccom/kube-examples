@@ -398,6 +398,10 @@ kubectl apply  -f metrics/prometheus/manifests
 kubectl create -f metrics/grafana/manifests
 ```
 
+These restrict the Prometheus and Grafana servers to run on nodes
+labeled `role.kos.example.com/base=true`, so you also need to label
+some nodes like that.
+
 The reason that `kubectl apply` is not used for Grafana is that the
 configmap containing the dashboard definitions is too big.
 

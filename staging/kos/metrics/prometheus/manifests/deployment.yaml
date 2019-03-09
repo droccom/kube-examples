@@ -15,7 +15,7 @@ spec:
         app: prometheus
     spec:
       nodeSelector:
-        role.kos.example.com/control: "true"
+        role.kos.example.com/base: "true"
       serviceAccountName: prometheus
       initContainers:
       - name: dataprep
