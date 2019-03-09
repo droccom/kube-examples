@@ -16,7 +16,7 @@
   "editable": true,
   "gnetId": 3070,
   "graphTooltip": 0,
-  "id": 8,
+  "id": 6,
   "links": [],
   "panels": [
     {
@@ -1356,7 +1356,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "sum(rate(etcd_server_proposals_committed_total{job=\"kubernetes-etcd\"}[5m]))",
+          "expr": "etcd_server_proposals_committed_total{job=\"kubernetes-etcd\"}",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "total number of consensus proposals committed",
@@ -1365,7 +1365,7 @@
           "step": 60
         },
         {
-          "expr": "sum(rate(etcd_server_proposals_applied_total{job=\"kubernetes-etcd\"}[5m]))",
+          "expr": "etcd_server_proposals_applied_total{job=\"kubernetes-etcd\"}",
           "format": "time_series",
           "intervalFactor": 2,
           "legendFormat": "total number of consensus proposals applied",
