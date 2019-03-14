@@ -15,7 +15,7 @@
   "editable": true,
   "gnetId": null,
   "graphTooltip": 0,
-  "id": 3,
+  "id": 7,
   "links": [],
   "panels": [
     {
@@ -69,6 +69,13 @@
           "intervalFactor": 2,
           "legendFormat": "{{ instance }} ipam total",
           "refId": "G"
+        },
+        {
+          "expr": "sum(rate(apiserver_request_count{client=~\".*connection-agent.*\"}[1m])) by (instance)",
+          "format": "time_series",
+          "intervalFactor": 2,
+          "legendFormat": "{{ instance }} ca total",
+          "refId": "H"
         },
         {
           "expr": "sum(rate(apiserver_dropped_requests[1m])) by (instance)",
@@ -989,5 +996,5 @@
   "timezone": "",
   "title": "Kubernetes apiservers",
   "uid": "z-OXUz_mk",
-  "version": 3
+  "version": 1
 }
