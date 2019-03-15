@@ -43,14 +43,16 @@ func main() {
 	var kubeconfigFilename string
 	var workers int
 	var clientQPS, clientBurst int
+	var indirectRequests bool
 	flag.StringVar(&kubeconfigFilename, "kubeconfig", "", "kubeconfig filename")
 	flag.IntVar(&workers, "workers", 2, "number of worker threads")
 	flag.IntVar(&clientQPS, "qps", 100, "limit on rate of calls to api-server")
 	flag.IntVar(&clientBurst, "burst", 200, "allowance for transient burst of calls to api-server")
+	flag.BoolVar(&indirectRequests, "indirect-requests", false, "send requests through the main apiserver(s) rather than directly to the network apiservers")
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
-	glog.Infof("IPAM controller start, kubeconfig=%q, workers=%d, QPS=%d, burst=%d\n", kubeconfigFilename, workers, clientQPS, clientBurst)
+	glog.Infof("IPAM controller start, kubeconfig=%q, workers=%d, QPS=%d, burst=%d, indirectRequests=%v\n", kubeconfigFilename, workers, clientQPS, clientBurst, indirectRequests)
 
 	if len(os.Getenv("GOMAXPROCS")) == 0 {
 		runtime.GOMAXPROCS(runtime.NumCPU())
@@ -80,7 +82,9 @@ func main() {
 		clientCfg = &cccopy
 	}
 
-	clientCfg.Host = "network-api:443"
+	if !indirectRequests {
+		clientCfg.Host = "network-api:443"
+	}
 	// TODO: give our apiservers verifiable identities
 	clientCfg.TLSClientConfig = rest.TLSClientConfig{Insecure: true}
 
