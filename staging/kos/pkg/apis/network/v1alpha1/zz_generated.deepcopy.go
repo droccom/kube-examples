@@ -73,7 +73,7 @@ func (in *IPLock) DeepCopyObject() runtime.Object {
 func (in *IPLockList) DeepCopyInto(out *IPLockList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
-	out.ListMeta = in.ListMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
 		*out = make([]IPLock, len(*in))
@@ -176,7 +176,7 @@ func (in *NetworkAttachmentErrors) DeepCopy() *NetworkAttachmentErrors {
 func (in *NetworkAttachmentList) DeepCopyInto(out *NetworkAttachmentList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
-	out.ListMeta = in.ListMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
 		*out = make([]NetworkAttachment, len(*in))
@@ -285,7 +285,7 @@ func (in *Subnet) DeepCopyObject() runtime.Object {
 func (in *SubnetList) DeepCopyInto(out *SubnetList) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
-	out.ListMeta = in.ListMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		in, out := &in.Items, &out.Items
 		*out = make([]Subnet, len(*in))
