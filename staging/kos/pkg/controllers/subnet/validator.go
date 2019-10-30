@@ -144,7 +144,8 @@ func NewValidationController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	eventIfc k8scorev1client.EventInterface,
 	queue k8sworkqueue.RateLimitingInterface,
 	workers int,
-	hostname string) *Validator {
+	hostname string,
+	test bool) *Validator {
 
 	subnetCreateToValidatedHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -229,14 +230,26 @@ func NewValidationController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Help:      "Number of queue worker threads",
 		})
 
-	prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount)
+	var eventRecorder k8seventrecord.EventRecorder
+
+	if !test {
+		// Register Prometheus metrics only if it's not a test because during a
+		// test the subnet validator constructor might be invoked multiple times
+		// and each invocation attempts to register the same Prometheus metrics
+		// names, which panics.
+		prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount)
+
+		eventBroadcaster := k8seventrecord.NewBroadcaster()
+		eventBroadcaster.StartLogging(klog.V(3).Infof)
+		eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
+		eventRecorder = eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "subnet-validator", Host: hostname})
+	} else {
+		// Unit tests pass even with a real recorder, but output is polluted by
+		// the recorder's error messages due to test Subnets lacking metadata.selfLink.
+		eventRecorder = &k8seventrecord.FakeRecorder{}
+	}
 
 	workerCount.Add(float64(workers))
-
-	eventBroadcaster := k8seventrecord.NewBroadcaster()
-	eventBroadcaster.StartLogging(klog.V(3).Infof)
-	eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
-	eventRecorder := eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "subnet-validator", Host: hostname})
 
 	return &Validator{
 		netIfc:                            netIfc,
@@ -333,25 +346,27 @@ func (v *Validator) OnDelete(obj interface{}) {
 }
 
 func (v *Validator) processQueue() {
-	for {
-		subnet, stop := v.queue.Get()
-		if stop {
-			return
-		}
-		v.processQueueItem(subnet.(k8stypes.NamespacedName))
+	for v.processQueueItem() {
 	}
 }
 
-func (v *Validator) processQueueItem(subnet k8stypes.NamespacedName) {
-	defer v.queue.Done(subnet)
-	requeues := v.queue.NumRequeues(subnet)
-	if err := v.processSubnet(subnet); err != nil {
-		klog.Warningf("Failed processing %s, requeuing (%d earlier requeues): %s.", subnet, requeues, err.Error())
-		v.queue.AddRateLimited(subnet)
-		return
+func (v *Validator) processQueueItem() bool {
+	queueItem, stop := v.queue.Get()
+	if stop {
+		return false
 	}
-	klog.V(4).Infof("Finished %s with %d requeues.", subnet, requeues)
-	v.queue.Forget(subnet)
+	subnetNSN := queueItem.(k8stypes.NamespacedName)
+	defer v.queue.Done(subnetNSN)
+
+	requeues := v.queue.NumRequeues(subnetNSN)
+	if err := v.processSubnet(subnetNSN); err == nil {
+		klog.V(4).Infof("Finished %s with %d requeues.", subnetNSN, requeues)
+		v.queue.Forget(subnetNSN)
+	} else {
+		klog.Warningf("Failed processing %s, requeuing (%d earlier requeues): %s.", subnetNSN, requeues, err.Error())
+		v.queue.AddRateLimited(subnetNSN)
+	}
+	return true
 }
 
 func (v *Validator) processSubnet(subnetNSN k8stypes.NamespacedName) error {
@@ -530,11 +545,11 @@ func (v *Validator) recordConflicts(candidate *subnet.Summary, potentialRivals [
 		// candidate are in conflict, that is, they are rivals.
 		if potentialRival.CIDRConflict(candidate) {
 			klog.V(2).Infof("CIDR conflict found between %s (%d, %d) and %s (%d, %d).", candidate.NamespacedName, candidate.BaseU, candidate.LastU, potentialRival.NamespacedName, potentialRival.BaseU, potentialRival.LastU)
-			conflictsMsgs = append(conflictsMsgs, fmt.Sprintf("CIDR overlaps with %s's (%s)", potentialRival.NamespacedName, pr.Spec.IPv4))
+			conflictsMsgs = append(conflictsMsgs, formatCIDRConflictMsg(potentialRival.NamespacedName, pr.Spec.IPv4))
 		}
 		if potentialRival.NSConflict(candidate) {
 			klog.V(2).Infof("Namespace conflict found between %s and %s.", candidate.NamespacedName, potentialRival.NamespacedName)
-			conflictsMsgs = append(conflictsMsgs, fmt.Sprintf("same VNI but different namespace wrt %s", potentialRival.NamespacedName))
+			conflictsMsgs = append(conflictsMsgs, formatNSConflictMsg(potentialRival.NamespacedName))
 		}
 
 		// Record the conflict in the conflicts cache.
@@ -544,6 +559,14 @@ func (v *Validator) recordConflicts(candidate *subnet.Summary, potentialRivals [
 	}
 
 	return
+}
+
+func formatCIDRConflictMsg(rivalNSN k8stypes.NamespacedName, rivalCIDR string) string {
+	return fmt.Sprintf("CIDR overlaps with %s's (%s)", rivalNSN, rivalCIDR)
+}
+
+func formatNSConflictMsg(rival k8stypes.NamespacedName) string {
+	return fmt.Sprintf("same VNI but different namespace wrt %s", rival)
 }
 
 func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []string) error {

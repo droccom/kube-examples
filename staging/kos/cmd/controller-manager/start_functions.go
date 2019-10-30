@@ -110,7 +110,7 @@ func startSubnetValidationController(ctx controllerContext, k8sClientCfg, kosCli
 		workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), "sv"),
 		ctx.options.SubnetValidationControllerWorkers,
 		ctx.options.Hostname,
-	)
+		false)
 
 	// Start the controller.
 	go func() {
