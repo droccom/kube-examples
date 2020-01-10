@@ -22,11 +22,14 @@ import (
 
 	k8scorev1api "k8s.io/api/core/v1"
 	k8sclient "k8s.io/client-go/kubernetes"
+	k8scorev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/workqueue"
+	k8seventrecord "k8s.io/client-go/tools/record"
+	workqueue "k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
 	kosclientset "k8s.io/examples/staging/kos/pkg/client/clientset/versioned"
+	kosscheme "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/scheme"
 	kosinformers "k8s.io/examples/staging/kos/pkg/client/informers/externalversions"
 	"k8s.io/examples/staging/kos/pkg/controllers/ipam"
 	"k8s.io/examples/staging/kos/pkg/controllers/subnet"
@@ -96,6 +99,10 @@ func startSubnetValidationController(ctx controllerContext, k8sClientCfg, kosCli
 		return fmt.Errorf("failed to configure k8s clientset for kubeconfig=%q: %s", ctx.options.KubeconfigFilename, err.Error())
 	}
 	eventIfc := k8sClientset.CoreV1().Events(k8scorev1api.NamespaceAll)
+	eventBroadcaster := k8seventrecord.NewBroadcaster()
+	eventBroadcaster.StartLogging(klog.V(3).Infof)
+	eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
+	eventRecorder := eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "subnet-validator", Host: ctx.options.Hostname})
 
 	kosClientset, err := kosclientset.NewForConfig(kosClientCfg)
 	if err != nil {
@@ -106,11 +113,9 @@ func startSubnetValidationController(ctx controllerContext, k8sClientCfg, kosCli
 	ctlr := subnet.NewValidationController(kosClientset.NetworkV1alpha1(),
 		subnets.Informer(),
 		subnets.Lister(),
-		eventIfc,
+		eventRecorder,
 		workqueue.NewNamedRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(200*time.Millisecond, 8*time.Hour), "sv"),
-		ctx.options.SubnetValidationControllerWorkers,
-		ctx.options.Hostname,
-		false)
+		ctx.options.SubnetValidationControllerWorkers)
 
 	// Start the controller.
 	go func() {

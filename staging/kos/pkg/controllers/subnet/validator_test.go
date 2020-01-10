@@ -19,7 +19,6 @@ package subnet
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -29,9 +28,11 @@ import (
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	k8stesting "k8s.io/client-go/testing"
 	k8scache "k8s.io/client-go/tools/cache"
+	k8seventrecord "k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
 	netv1a1 "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1"
@@ -142,8 +143,8 @@ func TestSubnetValidator(t *testing.T) {
 			rounds: []validatorTestRound{
 				{
 					expectedSubnets: []netv1a1.Subnet{
-						*newSubnet1(errMsg),
-						*newSubnet1(uid(uid2), name(name2), errMsg),
+						*newSubnet1(cidrConflictMessage(ns1, name2, cidr1)),
+						*newSubnet1(uid(uid2), name(name2), cidrConflictMessage(ns1, name1, cidr1)),
 					},
 				},
 			},
@@ -177,8 +178,8 @@ func TestSubnetValidator(t *testing.T) {
 				{
 					// round 0
 					expectedSubnets: []netv1a1.Subnet{
-						*newSubnet1(errMsg),
-						*newSubnet1(uid(uid2), name(name2), errMsg),
+						*newSubnet1(cidrConflictMessage(ns1, name2, cidr1)),
+						*newSubnet1(uid(uid2), name(name2), cidrConflictMessage(ns1, name1, cidr1)),
 					},
 					transitionToNextRound: func(client koscsv1a1.NetworkV1alpha1Interface) error {
 						// Delete one of the two subnets so that the other becomes valid.
@@ -195,13 +196,9 @@ func TestSubnetValidator(t *testing.T) {
 		},
 	}
 
-	// By default go-cmp considers equals two slices only if they contain the
-	// same items in the same order. This is too strict when comparing
-	// `Status.Errors` in expected and got subnets. cmpSubnetStatusErrs is a
-	// function that claims equality between `Status.Errors` of two subnets in a
-	// more liberal way.
 	cmpSubnetStatusErrs := cmp.Comparer(func(errs1, errs2 []string) bool {
-		return (len(errs1) > 0 && len(errs2) > 0) || (len(errs1) == 0 && len(errs2) == 0)
+		// Compare the slices ignoring the order of the elements.
+		return sets.NewString(errs1...).Equal(sets.NewString(errs2...))
 	})
 
 	// To compare expected and got subnets we use go-cmp but to have more robust
@@ -214,7 +211,7 @@ func TestSubnetValidator(t *testing.T) {
 
 		// go-cmp considers slices equals only if they contain the same elements
 		// in the same order, but we have no control on the order of the slice
-		// of subnets which represents the test output. We don't want spurius
+		// of subnets which represents the test output. We don't want spurious
 		// test failures due to the slice of expected subnets being in a
 		// different order wrt the slice of got subnets, so we tell go-cmp to
 		// sort slices before comparing them.
@@ -223,20 +220,6 @@ func TestSubnetValidator(t *testing.T) {
 			return s1.UID < s2.UID
 		}),
 
-		// `SubnetStatus.Errors` has two purposes:
-		//
-		// (1) Conveying information to users on why a subnet is invalid.
-		//
-		// (2) Telling controllers that read subnets (currently only the IPAM)
-		//     whether a subnet with status.validated=false has been processed
-		//     by the validator and deemed invalid, or is yet to be processed
-		//     by the validator.
-		//
-		// Currently we test only (2), meaning that tests don't care about
-		// what's written in `SubnetStatus.Errors`, they only care whether it's
-		// set or not. To achieve this we tweak go-cmp accordingly by passing
-		// `cmpSubnetStatusErrs`, our custom Equality judge for
-		// `SubnetStatus.Errors`.
 		cmp.FilterPath(func(fieldPath cmp.Path) bool {
 			return fieldPath.String() == "Status.Errors"
 		}, cmpSubnetStatusErrs),
@@ -275,15 +258,16 @@ func parallelTest(tc validatorTestCase, diffOptions cmp.Options, t *testing.T) {
 	subnetValidator := NewValidationController(client.NetworkV1alpha1(),
 		subnetsInformer.Informer(),
 		subnetsInformer.Lister(),
-		nil,
-		// Use a fake rate limiter (delay is always 0) to reduce likelyhood of
-		// spurius failures caused by a test timeout.
+		// Unit tests pass even with a real recorder, but the output is polluted
+		// by the recorder's error messages due to test Subnets lacking
+		// metadata.selfLink.
+		&k8seventrecord.FakeRecorder{},
+		// Use a fake rate limiter (delay is always 0) to reduce likelihood of
+		// spurious failures caused by a test timeout.
 		workqueue.NewRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(0, 0)),
 		// IMO we don't want more than one worker, it would make test failures
 		// less reproducible.
-		1,
-		"",
-		true)
+		1)
 
 	stopCh := make(chan struct{})
 	// Stop the informer and the subnet validator when the test ends.
@@ -385,11 +369,9 @@ func TestSubnetValidator_lateInformer(t *testing.T) {
 	subnetValidator := NewValidationController(client.NetworkV1alpha1(),
 		subnetsInformer.Informer(),
 		subnetsInformer.Lister(),
-		nil,
+		&k8seventrecord.FakeRecorder{},
 		workqueue.NewRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(0, 0)),
-		0,
-		"",
-		true)
+		1)
 
 	// Process s1. Ignore the error that will be returned (assuming the
 	// validator is correct) since in the current implementation successful
@@ -410,15 +392,16 @@ func TestSubnetValidator_lateInformer(t *testing.T) {
 	}
 }
 
-// incRVOnUpdate assumes that `action` is a subnet update and that the subnet's
-// resource version can be parsed into an int, never call it if such conditions
-// are not met.
 func incRVOnUpdate(action k8stesting.Action) (bool, runtime.Object, error) {
-	update := action.(k8stesting.UpdateAction)
-	subnet := update.GetObject().(*netv1a1.Subnet)
-	rv, _ := strconv.Atoi(subnet.ResourceVersion)
-	rv++
-	subnet.ResourceVersion = strconv.Itoa(rv)
+	update, isUpdate := action.(k8stesting.UpdateAction)
+	if !isUpdate {
+		panic(fmt.Sprintf("action must be an update, got a %T", action))
+	}
+	subnet, isSubnet := update.GetObject().(*netv1a1.Subnet)
+	if !isSubnet {
+		panic(fmt.Sprintf("updated object must be a %T, got a %T", &netv1a1.Subnet{}, update.GetObject()))
+	}
+	subnet.ResourceVersion = subnet.ResourceVersion + "1"
 	return false, nil, nil
 }
 
@@ -437,8 +420,8 @@ func newUpdateErrorReaction(numberOfErrors int) k8stesting.ReactionFunc {
 }
 
 //****************************************************************************
-// Follow functional options and util functions to create test subnets with  //
-// conveniently initialized values.                                          //
+// The following functional options and util functions create test subnets with
+// conveniently initialized values.
 //****************************************************************************
 
 type option func(*netv1a1.Subnet)
@@ -501,6 +484,16 @@ func uid(uid k8stypes.UID) option {
 	}
 }
 
-func errMsg(s *netv1a1.Subnet) {
-	s.Status.Errors = []string{"error message"}
+func nsConflictMessage(ns, name string) option {
+	return func(s *netv1a1.Subnet) {
+		nsn := k8stypes.NamespacedName{ns, name}
+		s.Status.Errors = append(s.Status.Errors, formatNSConflictMsg(nsn))
+	}
+}
+
+func cidrConflictMessage(ns, name, cidr string) option {
+	return func(s *netv1a1.Subnet) {
+		nsn := k8stypes.NamespacedName{ns, name}
+		s.Status.Errors = append(s.Status.Errors, formatCIDRConflictMsg(nsn, cidr))
+	}
 }

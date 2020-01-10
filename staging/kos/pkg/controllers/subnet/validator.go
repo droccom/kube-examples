@@ -34,14 +34,12 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	k8sutilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	k8swait "k8s.io/apimachinery/pkg/util/wait"
-	k8scorev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	k8scache "k8s.io/client-go/tools/cache"
 	k8seventrecord "k8s.io/client-go/tools/record"
 	k8sworkqueue "k8s.io/client-go/util/workqueue"
 	"k8s.io/klog"
 
 	netv1a1 "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1"
-	kosscheme "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/scheme"
 	kosclientv1a1 "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/typed/network/v1alpha1"
 	netlistv1a1 "k8s.io/examples/staging/kos/pkg/client/listers/network/v1alpha1"
 	"k8s.io/examples/staging/kos/pkg/util/parse"
@@ -59,6 +57,132 @@ const (
 	metricsNamespace = "kos"
 	metricsSubsystem = "subnet_validator"
 )
+
+// Prometheus metrics.
+var (
+	// Latency from subnet ObjectMeta.CreationTimestamp to return from update
+	// writing validation outcome in status.
+	subnetCreateToValidatedHistograms *prometheus.HistogramVec
+
+	// Round trip time to update Subnet status.
+	subnetUpdateHistograms *prometheus.HistogramVec
+
+	// Round trip time of live lists to fetch subnets.
+	liveListHistograms *prometheus.HistogramVec
+
+	// Number of subnets returned by live lists.
+	liveListResultLengthHistogram prometheus.Histogram
+
+	// Number of times a worker processed a subnet all the way to the status
+	// update to find out that the status was already up to date.
+	duplicateWorkCount prometheus.Counter
+
+	// Number of times work on a subnet was suppressed because the subnet was
+	// stale.
+	staleSubnetsSuppressionCount prometheus.Counter
+
+	// Number of times the subnet received from the API server did not match the
+	// one owning the conflicts cache. This also counts cases where a subnet
+	// is received but the conflicts cache is not there.
+	cacheVsLiveSubnetMismatches *prometheus.CounterVec
+
+	// Number of worker goroutines.
+	workerCount prometheus.Counter
+)
+
+func init() {
+	// Register metrics here instead of the subnet validator constructor to
+	// avoid registering the same metric name more than once (which panics) in
+	// unit tests, where the constructor is invoked multiple times.
+	setupPrometheusMetrics()
+}
+
+func setupPrometheusMetrics() {
+	subnetCreateToValidatedHistograms = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "subnet_create_to_validated_latency_seconds",
+			Help:      "Latency from subnet CreationTimestamp to return from update writing validation outcome in status per outcome, in seconds.",
+			Buckets:   []float64{-1, 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
+		},
+		[]string{"statusErr"})
+	errValT, errValF := FormatErrVal(true), FormatErrVal(false)
+	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValT})
+	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValF})
+
+	subnetUpdateHistograms = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "subnet_update_latency_seconds",
+			Help:      "Round trip time to update subnet status, in seconds.",
+			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
+		},
+		[]string{"err", "statusErr"})
+	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValT})
+	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValT})
+	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValF})
+	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValF})
+
+	liveListHistograms = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "live_list_latency_seconds",
+			Help:      "Round trip time of live lists to fetch subnets, in seconds.",
+			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
+		},
+		[]string{"err"})
+	liveListHistograms.With(prometheus.Labels{"err": errValT})
+	liveListHistograms.With(prometheus.Labels{"err": errValF})
+
+	liveListResultLengthHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "number_of_subnets_returned_by_live_list",
+			Help:      "Number of subnets returned by live lists.",
+			Buckets:   []float64{-1, 0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192},
+		})
+
+	duplicateWorkCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "duplicate_work_count",
+			Help:      "Number of times a subnet was processed but there was no status update because the status was already up to date.",
+		})
+
+	staleSubnetsSuppressionCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "stale_subnet_work_suppression_count",
+			Help:      "Number of times processing of a subnet stopped because the subnet was stale.",
+		})
+
+	cacheVsLiveSubnetMismatches = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "subnet_live_vs_conflict_cache_count",
+			Help:      "Number of times processing of a subnet stopped because of a mismatch between the subnet from the API server and the one associated with the conflicts cache.",
+		},
+		[]string{"mismatch_type"})
+	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": missingCacheMismatch})
+	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": cacheOwnerMismatch})
+
+	workerCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "worker_count",
+			Help:      "Number of queue worker threads",
+		})
+
+	prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount)
+}
 
 // conflictsCache holds information for one subnet regarding conflicts with
 // other subnets. There's no guarantee that the cache is up-to-date. For
@@ -110,163 +234,26 @@ type Validator struct {
 	// Only access while holding staleRVsMutex.
 	staleRVs      map[k8stypes.NamespacedName]string
 	staleRVsMutex sync.RWMutex
-
-	// Latency from subnet ObjectMeta.CreationTimestamp to return from update
-	// writing validation outcome in status.
-	subnetCreateToValidatedHistograms *prometheus.HistogramVec
-
-	// Round trip time to update Subnet status.
-	subnetUpdateHistograms *prometheus.HistogramVec
-
-	// Round trip time of live lists to fetch subnets.
-	liveListHistograms *prometheus.HistogramVec
-
-	// Number of subnets returned by live lists.
-	liveListResultLengthHistogram prometheus.Histogram
-
-	// Number of times a worker processed a subnet all the way to the status
-	// update to find out that the status was already up to date.
-	duplicateWorkCount prometheus.Counter
-
-	// Number of times work on a subnet was suppressed because the subnet was
-	// stale.
-	staleSubnetsSuppressionCount prometheus.Counter
-
-	// Number of times the subnet received from the API server did not match the
-	// one owning the conflicts cache. This also counts cases where a subnet
-	// is received but the conflicts cache is not there.
-	cacheVsLiveSubnetMismatches *prometheus.CounterVec
 }
 
 func NewValidationController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	subnetInformer k8scache.SharedInformer,
 	subnetLister netlistv1a1.SubnetLister,
-	eventIfc k8scorev1client.EventInterface,
+	eventRecorder k8seventrecord.EventRecorder,
 	queue k8sworkqueue.RateLimitingInterface,
-	workers int,
-	hostname string,
-	test bool) *Validator {
-
-	subnetCreateToValidatedHistograms := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "subnet_create_to_validated_latency_seconds",
-			Help:      "Latency from subnet CreationTimestamp to return from update writing validation outcome in status per outcome, in seconds.",
-			Buckets:   []float64{-1, 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
-		},
-		[]string{"statusErr"})
-	errValT, errValF := FormatErrVal(true), FormatErrVal(false)
-	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValT})
-	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValF})
-
-	subnetUpdateHistograms := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "subnet_update_latency_seconds",
-			Help:      "Round trip time to update subnet status, in seconds.",
-			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
-		},
-		[]string{"err", "statusErr"})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValT})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValT})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValF})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValF})
-
-	liveListHistograms := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "live_list_latency_seconds",
-			Help:      "Round trip time of live lists to fetch subnets, in seconds.",
-			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
-		},
-		[]string{"err"})
-	liveListHistograms.With(prometheus.Labels{"err": errValT})
-	liveListHistograms.With(prometheus.Labels{"err": errValF})
-
-	liveListResultLengthHistogram := prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "number_of_subnets_returned_by_live_list",
-			Help:      "Number of subnets returned by live lists.",
-			Buckets:   []float64{-1, 0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192},
-		})
-
-	duplicateWorkCount := prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "duplicate_work_count",
-			Help:      "Number of times a subnet was processed but there was no status update because the status was already up to date.",
-		})
-
-	staleSubnetsSuppressionCount := prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "stale_subnet_work_suppression_count",
-			Help:      "Number of times processing of a subnet stopped because the subnet was stale.",
-		})
-
-	cacheVsLiveSubnetMismatches := prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "subnet_live_vs_conflict_cache_count",
-			Help:      "Number of times processing of a subnet stopped because of a mismatch between the subnet from the API server and the one associated with the conflicts cache.",
-		},
-		[]string{"mismatch_type"})
-	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": missingCacheMismatch})
-	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": cacheOwnerMismatch})
-
-	workerCount := prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: metricsNamespace,
-			Subsystem: metricsSubsystem,
-			Name:      "worker_count",
-			Help:      "Number of queue worker threads",
-		})
-
-	var eventRecorder k8seventrecord.EventRecorder
-
-	if !test {
-		// Register Prometheus metrics only if it's not a test because during a
-		// test the subnet validator constructor might be invoked multiple times
-		// and each invocation attempts to register the same Prometheus metrics
-		// names, which panics.
-		prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount)
-
-		eventBroadcaster := k8seventrecord.NewBroadcaster()
-		eventBroadcaster.StartLogging(klog.V(3).Infof)
-		eventBroadcaster.StartRecordingToSink(&k8scorev1client.EventSinkImpl{eventIfc})
-		eventRecorder = eventBroadcaster.NewRecorder(kosscheme.Scheme, k8scorev1api.EventSource{Component: "subnet-validator", Host: hostname})
-	} else {
-		// Unit tests pass even with a real recorder, but output is polluted by
-		// the recorder's error messages due to test Subnets lacking metadata.selfLink.
-		eventRecorder = &k8seventrecord.FakeRecorder{}
-	}
+	workers int) *Validator {
 
 	workerCount.Add(float64(workers))
 
 	return &Validator{
-		netIfc:                            netIfc,
-		subnetInformer:                    subnetInformer,
-		subnetLister:                      subnetLister,
-		eventRecorder:                     eventRecorder,
-		subnetCreateToValidatedHistograms: subnetCreateToValidatedHistograms,
-		subnetUpdateHistograms:            subnetUpdateHistograms,
-		liveListHistograms:                liveListHistograms,
-		liveListResultLengthHistogram:     liveListResultLengthHistogram,
-		duplicateWorkCount:                duplicateWorkCount,
-		staleSubnetsSuppressionCount:      staleSubnetsSuppressionCount,
-		cacheVsLiveSubnetMismatches:       cacheVsLiveSubnetMismatches,
-		queue:                             queue,
-		workers:                           workers,
-		conflicts:                         make(map[k8stypes.NamespacedName]*conflictsCache),
-		staleRVs:                          make(map[k8stypes.NamespacedName]string),
+		netIfc:         netIfc,
+		subnetInformer: subnetInformer,
+		subnetLister:   subnetLister,
+		eventRecorder:  eventRecorder,
+		queue:          queue,
+		workers:        workers,
+		conflicts:      make(map[k8stypes.NamespacedName]*conflictsCache),
+		staleRVs:       make(map[k8stypes.NamespacedName]string),
 	}
 }
 
@@ -406,7 +393,7 @@ func (v *Validator) processExistingSubnet(s *netv1a1.Subnet) error {
 
 	if v.subnetIsStale(ss.NamespacedName, s.ResourceVersion) {
 		klog.V(5).Infof("Stopping processing of %s because it's stale. Processing will be restarted upon receiving the fresh version.", ss.NamespacedName)
-		v.staleSubnetsSuppressionCount.Inc()
+		staleSubnetsSuppressionCount.Inc()
 		return nil
 	}
 
@@ -433,8 +420,8 @@ func (v *Validator) processExistingSubnet(s *netv1a1.Subnet) error {
 		FieldSelector: k8sfields.OneTermEqualSelector(subnetVNIField, strconv.FormatUint(uint64(ss.VNI), 10)).String(),
 	})
 	tAfter := time.Now()
-	v.liveListHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
-	v.liveListResultLengthHistogram.Observe(float64(len(potentialRivals.Items)))
+	liveListHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	liveListResultLengthHistogram.Observe(float64(len(potentialRivals.Items)))
 	if err != nil {
 		if malformedRequest(err) {
 			klog.Errorf("live list of all subnets against API server failed while validating %s: %s. There will be no retry because of the nature of the error", ss.NamespacedName, err.Error())
@@ -575,7 +562,7 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 	validated := len(validationErrors) == 0
 	if s1.Status.Validated == validated && equal(s1.Status.Errors, validationErrors) {
 		klog.V(4).Infof("%s/%s's status was not updated because it is already up to date.", s1.Namespace, s1.Name)
-		v.duplicateWorkCount.Inc()
+		duplicateWorkCount.Inc()
 		return nil
 	}
 
@@ -586,7 +573,7 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 	tBefore := time.Now()
 	s3, err := v.netIfc.Subnets(s2.Namespace).Update(s2)
 	tAfter := time.Now()
-	v.subnetUpdateHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil), "statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(tBefore).Seconds())
+	subnetUpdateHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil), "statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(tBefore).Seconds())
 	switch {
 	case err == nil:
 		nsn := k8stypes.NamespacedName{
@@ -596,7 +583,7 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 		klog.V(4).Infof("Recorded errors=%s and validated=%t into %s's status.", validationErrors, s2.Status.Validated, nsn)
 		v.updateStaleRV(nsn, s1.ResourceVersion)
 		if !s1.Status.Validated && len(s1.Status.Errors) == 0 {
-			v.subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(s1.CreationTimestamp.Time).Seconds())
+			subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(s1.CreationTimestamp.Time).Seconds())
 		}
 		if validated {
 			v.eventRecorder.Event(s3, k8scorev1api.EventTypeNormal, "SubnetValidated", "")
@@ -619,7 +606,7 @@ func (v *Validator) recordConflict(enrollerNSN, enrolleeNSN k8stypes.NamespacedN
 	defer func() {
 		v.conflictsMutex.Unlock()
 		if mismatchType != "" {
-			v.cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": mismatchType}).Inc()
+			cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": mismatchType}).Inc()
 		}
 	}()
 
