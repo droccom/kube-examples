@@ -14,12 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package ovs implements an Openvswitch based network fabric. To be able to
-// create an ovs network fabric in an application, you need to import package
-// ovs for side effects ("_" import name) in the main package of the
-// application. This ensures that the factory which creates ovs network fabrics
-// is registered in the network fabric factory registry, and can therefore be
-// used to instantiate network fabrics.
 package ovs
 
 import (
@@ -106,7 +100,7 @@ func init() {
 }
 
 // newFactory returns an OvS network fabric factory function whose underlying
-// OvS bridge has name bridge.
+// OvS bridge has name `bridge`.
 func newFactory(bridge string) factory.Interface {
 	// the returned function can be used to instantiate an OvS network fabric.
 	return func() (networkfabric.Interface, error) {
