@@ -650,9 +650,9 @@ func (f *ovsFabric) parseRemoteFlowsPairs(flowsPairs [][]string) []networkfabric
 }
 
 func (f *ovsFabric) nameIfcs(ofPortToIfcName map[uint16]string, ofPortToIfc map[uint16]*networkfabric.LocalNetIfc) ([]networkfabric.LocalNetIfc, []string) {
-	// we assume that most of the interfaces can be completed (both the network
+	// We assume that most of the interfaces can be completed (both the network
 	// device and the OpenFlow flows were found), that's why completeIfcs
-	// has capacity len(ofPortToIfc) whereas incompleteIfcs has capacity 0
+	// has capacity len(ofPortToIfc) whereas incompleteIfcs has capacity 0.
 	completeIfcs := make([]networkfabric.LocalNetIfc, 0, len(ofPortToIfc))
 	incompleteIfcs := make([]string, 0)
 
@@ -800,11 +800,11 @@ func (f *ovsFabric) arpOrDlTrafficFlowOFport(flow string) string {
 }
 
 func (f *ovsFabric) parseLocalFlowPair(flowsPair []string) *networkfabric.LocalNetIfc {
-	ifc := &networkfabric.LocalNetIfc{}
-
-	// both flows in a pair store the vni, we can take it from the first
-	// flow without checking its kind
-	ifc.VNI = f.extractVNI(flowsPair[0])
+	ifc := &networkfabric.LocalNetIfc{
+		// Both flows in a pair store the VNI, we can take it from the first
+		// flow without checking its kind.
+		VNI: f.extractVNI(flowsPair[0]),
+	}
 
 	for _, aFlow := range flowsPair {
 		if isARP(aFlow) {
@@ -818,13 +818,13 @@ func (f *ovsFabric) parseLocalFlowPair(flowsPair []string) *networkfabric.LocalN
 }
 
 func (f *ovsFabric) parseRemoteFlowPair(flowsPair []string) networkfabric.RemoteNetIfc {
-	ifc := networkfabric.RemoteNetIfc{}
-
-	// VNI and host IP of a remote interface are stored in both flows created
-	// for the interface, thus we can take them from the first flow of the pair
-	// without knowing which one it is
-	ifc.VNI = f.extractVNI(flowsPair[0])
-	ifc.HostIP = f.extractHostIP(flowsPair[0])
+	ifc := networkfabric.RemoteNetIfc{
+		// The VNI and the host IP of a remote interface are stored in both
+		// flows created for the interface, thus we can take them from the first
+		// flow of the pair without knowing which one it is.
+		VNI:    f.extractVNI(flowsPair[0]),
+		HostIP: f.extractHostIP(flowsPair[0]),
+	}
 
 	for _, aFlow := range flowsPair {
 		if isARP(aFlow) {
@@ -943,16 +943,18 @@ func (f *ovsFabric) newDeleteBridgePortCmd(ifc string) *exec.Cmd {
 }
 
 func (f *ovsFabric) newAddFlowsCmd(flows ...string) *exec.Cmd {
-	// the --bundle flag makes the addition of the flows transactional, but it
-	// works only if the flows are in a file
+	// The --bundle flag makes the addition of the flows transactional, but it
+	// works only if the flows are in a file, so we manually write the flows to
+	// add in the command's Stdin.
 	cmd := exec.Command("ovs-ofctl", "--bundle", "add-flows", f.bridge, "-")
 	cmd.Stdin = strings.NewReader(strings.Join(flows, "\n") + "\n")
 	return cmd
 }
 
 func (f *ovsFabric) newDelFlowsCmd(flows ...string) *exec.Cmd {
-	// the --bundle flag makes the deletion of the flows transactional, but it
-	// works only if the flows are in a file
+	// The --bundle flag makes the deletion of the flows transactional, but it
+	// works only if the flows are in a file, so we manually write the flows to
+	// delete in the command's Stdin.
 	cmd := exec.Command("ovs-ofctl", "--bundle", "del-flows", f.bridge, "-")
 	cmd.Stdin = strings.NewReader(strings.Join(flows, "\n") + "\n")
 	return cmd

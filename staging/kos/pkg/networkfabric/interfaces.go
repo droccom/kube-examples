@@ -83,6 +83,14 @@ type Interface interface {
 	// regardless of whether the process that invokes `ListLocalIfcs` is the
 	// same process that created X and regardless of whether the process that
 	// created X is still running.
+	// ListLocalIfcs should always be called by users of a fabric BEFORE doing
+	// any other operation through the fabric, to know which local Network
+	// Interfaces were previously created on the node.
+	// Creating local Network Interfaces might entail non-atomic operations, and
+	// the process doing the creation might fail in the middle of it, leaving an
+	// half-implemented Network Interface on the node. Implementers of this
+	// contract can put clean-up actions to remove half-implemented Network
+	// Interfaces in this function.
 	ListLocalIfcs() ([]LocalNetIfc, error)
 
 	// ListRemoteIfcs returns all the remote Network Interfaces that exist on
@@ -94,6 +102,14 @@ type Interface interface {
 	// regardless of whether the process that invokes `ListRemoteIfcs` is the
 	// same process that created X and regardless of whether the process that
 	// created X is still running.
+	// ListRemoteIfcs should always be called by users of a fabric BEFORE doing
+	// any other operation through the fabric, to know which remote Network
+	// Interfaces were previously created on the node.
+	// Creating remote Network Interfaces might entail non-atomic operations, and
+	// the process doing the creation might fail in the middle of it, leaving an
+	// half-implemented Network Interface on the node. Implementers of this
+	// contract can put clean-up actions to remove half-implemented Network
+	// Interfaces in this function.
 	ListRemoteIfcs() ([]RemoteNetIfc, error)
 }
 

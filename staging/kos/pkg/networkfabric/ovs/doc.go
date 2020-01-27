@@ -36,6 +36,12 @@ limitations under the License.
 // This is important because the bridge and the VTEP outlive the process that
 // created them.
 //
+// If multiple processes using an OvS fabric ran at the same time on the same
+// node, each fabric would configure the same OvS bridge without realizing
+// another fabric is doing the same. This can lead to severe errors and
+// misconfigurations. It is up to users of the fabric to ensure that they are
+// the only process on their node that is using an OvS fabric.
+//
 // A local Network Interface is implemented as Linux network device connected
 // to the bridge and three OpenFlow flows that allow the network device to send
 // and receive traffic. One flow encapsulates all traffic coming from the Linux
@@ -45,10 +51,25 @@ limitations under the License.
 // Linux network device.
 // The flows are added/removed atomically to/from the bridge, but the creation
 // of the Linux network device and the addition of the flows are not executed
-// atomically. If a failure occurs after the creation of the Linux network
+// atomically. If an error occurs after the creation of the Linux network
 // device but before (or during) the addition of the flows, a one-shot attempt
 // to delete the Linux network device is done; if it fails the fabric gives up
 // and an incomplete implementation of the Network Interface is left on the node.
+// Another case where an incomplete implementation of a local Network Interface
+// is left on the node is when the process that uses this fabric crashes between
+// creation of the Linux network device and addition of the flows.
+// `ListLocalIfcs()`, the method that returns all the existing local network
+// Interfaces in the bridge, queries the bridge OpenFlow flows and Linux network
+// devices and tries to pair them, each pairing is then parsed into the
+// appropriate `k8s.io/examples/staging/kos/pkg/networkfabric.LocalNetIfc`.
+// `ListLocalIfcs()` might find incomplete implementations, that is, Linux
+// network devices connected to the bridge for whom OpenFlow flows are not in
+// the bridge; the reasons that can lead to such incomplete implementations were
+// given earlier in this paragraph. In such cases, an attempt to clean up the
+// incomplete implementation is made by deleting the Linux network device; only
+// one try is made, if it fails, the incomplete implementation is left on the
+// node and no error is returned.
+//
 //
 // A remote Network Interface is implemented as two OpenFlow flows. One flow
 // sends ARP requests for the remote Network Interface IP and VNI to the
@@ -56,6 +77,11 @@ limitations under the License.
 // other flow does the same thing, except for Layer 2 frames for the Network
 // Interface MAC address and VNI instead of ARP requests. The two flows are
 // added/removed atomically to/from the fabric's bridge.
+// `ListRemoteIfcs()`, the method that returns all the existing remote Network
+// Interfaces in the bridge, simply queries the bridge for all the OpenFlow
+// flows and parses the flows that were added for a remote Network Interface
+// into the appropriate `k8s.io/examples/staging/kos/pkg/networkfabric.RemoteNetIfc`.
+//
 //
 // Currently, all operations on the bridge are done using the OvS CLI (through
 // Golang's os.Exec).
