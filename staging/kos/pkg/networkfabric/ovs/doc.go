@@ -42,31 +42,31 @@ limitations under the License.
 // misconfigurations. It is up to users of the fabric to ensure that they are
 // the only process on their node that is using an OvS fabric.
 //
-// A local Network Interface is implemented as Linux network device connected
-// to the bridge and three OpenFlow flows that allow the network device to send
+// A local Network Interface is implemented as Linux network interface connected
+// to the bridge and three OpenFlow flows that allow the network interface to send
 // and receive traffic. One flow encapsulates all traffic coming from the Linux
-// network device in a VXLAN packet, one flow forwards ARP requests for the
-// Network Interface IP and VNI to the Linux network device, one flow forwards
+// network interface in a VXLAN packet, one flow forwards ARP requests for the
+// Network Interface IP and VNI to the Linux network interface, one flow forwards
 // normal Layer 2 frames for the Network Interface MAC address and VNI to the
-// Linux network device.
+// Linux network interface.
 // The flows are added/removed atomically to/from the bridge, but the creation
-// of the Linux network device and the addition of the flows are not executed
+// of the Linux network interface and the addition of the flows are not executed
 // atomically. If an error occurs after the creation of the Linux network
-// device but before (or during) the addition of the flows, a one-shot attempt
-// to delete the Linux network device is done; if it fails the fabric gives up
-// and an incomplete implementation of the Network Interface is left on the node.
+// interface but before (or during) the addition of the flows, a one-shot attempt
+// to delete the Linux network interface is done; if it fails the fabric gives up
+// and an incomplete implementation of the local Network Interface is left on the node.
 // Another case where an incomplete implementation of a local Network Interface
 // is left on the node is when the process that uses this fabric crashes between
-// creation of the Linux network device and addition of the flows.
+// creation of the Linux network interface and addition of the flows.
 // `ListLocalIfcs()`, the method that returns all the existing local network
 // Interfaces in the bridge, queries the bridge OpenFlow flows and Linux network
-// devices and tries to pair them, each pairing is then parsed into the
+// interfaces and tries to pair them, each pairing is then parsed into the
 // appropriate `k8s.io/examples/staging/kos/pkg/networkfabric.LocalNetIfc`.
 // `ListLocalIfcs()` might find incomplete implementations, that is, Linux
-// network devices connected to the bridge for whom OpenFlow flows are not in
+// network interfaces connected to the bridge for whom OpenFlow flows are not in
 // the bridge; the reasons that can lead to such incomplete implementations were
 // given earlier in this paragraph. In such cases, an attempt to clean up the
-// incomplete implementation is made by deleting the Linux network device; only
+// incomplete implementation is made by deleting the Linux network interface; only
 // one try is made, if it fails, the incomplete implementation is left on the
 // node and no error is returned.
 //

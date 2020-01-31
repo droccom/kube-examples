@@ -30,8 +30,8 @@ import "net"
 //
 // A local Network Interface is the networking state of a guest that is bound to
 // the same node as the user of this contract. Creating a local Network
-// Interface means creating a Linux network device and configuring the node's
-// networking state so that the Linux network device can send/receive VXLAN-tunneled
+// Interface means creating a Linux network interface and configuring the node's
+// networking state so that the Linux network interface can send/receive VXLAN-tunneled
 // traffic to/from other guests (local or remote) in its VXLAN segment.
 //
 // A remote Network Interface is the networking state of a guest that is bound
@@ -114,8 +114,8 @@ type Interface interface {
 }
 
 // LocalNetIfc describes a local Network Interface. It contains everything
-// Interface.CreateLocalIfc needs to create a Linux network device and configure
-// networking state so that the Linux network device can send/receive
+// Interface.CreateLocalIfc needs to create a Linux network interface and configure
+// networking state so that the Linux network interface can send/receive
 // VXLAN-tunneled traffic.
 type LocalNetIfc struct {
 	Name     string
