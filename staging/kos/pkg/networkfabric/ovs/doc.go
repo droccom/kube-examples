@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package ovs defines a network fabric that implements k8s.io/examples/staging/kos/pkg/networkfabric.Interface .
+// Package ovs defines a network fabric that implements k8s.io/examples/staging/kos/pkg/networkfabric.Contract .
 //
 // The fabric is thread-safe.
 //
@@ -28,7 +28,7 @@ limitations under the License.
 // node.
 //******************************************************************************
 //
-// The fabric constructor's creates the OvS bridge and a Network Interface
+// The fabric constructor's creates the OvS bridge and a Linux network Interface
 // configured to act as a VXLAN Tunnel End Point (VTEP), and connects them
 // together. It also installs some default OpenFlow flows in the bridge.
 // All these operations are idempotent so that it is safe for the process that
@@ -42,7 +42,7 @@ limitations under the License.
 // misconfigurations. It is up to users of the fabric to ensure that they are
 // the only process on their node that is using an OvS fabric.
 //
-// A local Network Interface is implemented as Linux network interface connected
+// A local Network Interface is implemented as a Linux network interface connected
 // to the bridge and three OpenFlow flows that allow the network interface to send
 // and receive traffic. One flow encapsulates all traffic coming from the Linux
 // network interface in a VXLAN packet, one flow forwards ARP requests for the

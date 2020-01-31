@@ -18,7 +18,7 @@ package networkfabric
 
 import "net"
 
-// Interface is the contract of a VXLAN network fabric.
+// Contract is the contract of a VXLAN network fabric.
 // It declares functions to create Network Interfaces that are part of a VXLAN
 // segment.
 // The VXLAN segment of a Network Interface is an invocation argument of the
@@ -56,7 +56,7 @@ import "net"
 //     This is true regardless of the relationship between X and Y's other (than
 //     guest IP and VNI) fields and regardless of whether X and Y are local or
 //     remote.
-type Interface interface {
+type Contract interface {
 	// Name returns the name of the fabric.
 	Name() string
 
@@ -114,7 +114,7 @@ type Interface interface {
 }
 
 // LocalNetIfc describes a local Network Interface. It contains everything
-// Interface.CreateLocalIfc needs to create a Linux network interface and configure
+// Contract.CreateLocalIfc needs to create a Linux network interface and configure
 // networking state so that the Linux network interface can send/receive
 // VXLAN-tunneled traffic.
 type LocalNetIfc struct {
@@ -125,7 +125,7 @@ type LocalNetIfc struct {
 }
 
 // RemoteNetIfc describes a remote Network Interface. It contains everything
-// Interface.CreateRemoteIfc needs to configure networking state so that local
+// Contract.CreateRemoteIfc needs to configure networking state so that local
 // Network Interfaces can send VXLAN-tunneled traffic to the remote Network
 // Interface.
 type RemoteNetIfc struct {

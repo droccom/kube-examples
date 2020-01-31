@@ -103,7 +103,7 @@ func init() {
 // OvS bridge has name `bridge`.
 func newFactory(bridge string) factory.Interface {
 	// the returned function can be used to instantiate an OvS network fabric.
-	return func() (networkfabric.Interface, error) {
+	return func() (networkfabric.Contract, error) {
 		f := &ovsFabric{
 			lockedVNIIPPairs: make(map[vniAndIP]struct{}),
 		}

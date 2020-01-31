@@ -209,7 +209,7 @@ type ConnectionAgent struct {
 	eventRecorder k8seventrecord.EventRecorder
 	queue         k8sworkqueue.RateLimitingInterface
 	workers       int
-	netFabric     netfabric.Interface
+	netFabric     netfabric.Contract
 	stopCh        <-chan struct{}
 
 	// Informer and lister on NetworkAttachments on the same node as the
@@ -276,7 +276,7 @@ func New(node string,
 	eventIfc k8scorev1client.EventInterface,
 	queue k8sworkqueue.RateLimitingInterface,
 	workers int,
-	netFabric netfabric.Interface,
+	netFabric netfabric.Contract,
 	allowedPrograms map[string]struct{}) *ConnectionAgent {
 
 	attachmentCreateToLocalIfcHistogram := prometheus.NewHistogram(
