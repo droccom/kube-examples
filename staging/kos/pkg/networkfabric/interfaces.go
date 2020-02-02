@@ -18,32 +18,30 @@ package networkfabric
 
 import "net"
 
-// Contract is the contract of a VXLAN network fabric.
-// It declares functions to create Network Interfaces that are part of a VXLAN
+// InterfaceManager is the contract of a VXLAN network fabric.
+// It declares functions to manage Network Interfaces that are part of a VXLAN
 // segment.
-// The VXLAN segment of a Network Interface is an invocation argument of the
-// functions to create the Network Interface.
-// All traffic sent/received to/from the Network Interfaces created via an
-// implementer of this contract MUST be VXLAN-tunneled.
+// All traffic sent/received to/from the Network Interfaces created by an
+// implementer of InterfaceManager MUST be VXLAN-tunneled.
 //
-// This contract makes a distinction between local and remote Network Interfaces.
+// InterfaceManager makes a distinction between local and remote Network Interfaces.
 //
 // A local Network Interface is the networking state of a guest that is bound to
-// the same node as the user of this contract. Creating a local Network
+// the same node as the user of InterfaceManager. Creating a local Network
 // Interface means creating a Linux network interface and configuring the node's
 // networking state so that the Linux network interface can send/receive VXLAN-tunneled
 // traffic to/from other guests (local or remote) in its VXLAN segment.
 //
 // A remote Network Interface is the networking state of a guest that is bound
-// to a node other than that of the user of this contract. Creating a remote
+// to a node other than that of the user of InterfaceManager. Creating a remote
 // Network Interface means configuring the networking state on the node of the
-// user of this contract so that traffic generated on such node and directed at
+// user of InterfaceManager so that traffic generated on such node and directed at
 // the remote Network Interface is correctly VXLAN-tunneled to the node of the
 // remote Network Interface.
 //
 // Network Interfaces are identified by a name, which must be unique over space.
-// (VNI, guest IP) pairs must also be unique over space, that is, for this
-// contract two Network Interfaces with the same (VNI, guest IP) pair are the
+// (VNI, guest IP) pairs must also be unique over space, that is, for InterfaceManager
+// two Network Interfaces with the same (VNI, guest IP) pair are the
 // same Network Interface. Follow some guarantees that implementers MUST make:
 //
 // (1) After a Network Interface X is created, fabric calls to create a Network
@@ -56,7 +54,7 @@ import "net"
 //     This is true regardless of the relationship between X and Y's other (than
 //     guest IP and VNI) fields and regardless of whether X and Y are local or
 //     remote.
-type Contract interface {
+type InterfaceManager interface {
 	// Name returns the name of the fabric.
 	Name() string
 
@@ -88,9 +86,9 @@ type Contract interface {
 	// Interfaces were previously created on the node.
 	// Creating local Network Interfaces might entail non-atomic operations, and
 	// the process doing the creation might fail in the middle of it, leaving an
-	// half-implemented Network Interface on the node. Implementers of this
-	// contract can put clean-up actions to remove half-implemented Network
-	// Interfaces in this function.
+	// half-implemented Network Interface on the node. Implementers of InterfaceManager
+	// can put clean-up actions to remove half-implemented Network Interfaces in
+	// this function.
 	ListLocalIfcs() ([]LocalNetIfc, error)
 
 	// ListRemoteIfcs returns all the remote Network Interfaces that exist on
@@ -107,14 +105,14 @@ type Contract interface {
 	// Interfaces were previously created on the node.
 	// Creating remote Network Interfaces might entail non-atomic operations, and
 	// the process doing the creation might fail in the middle of it, leaving an
-	// half-implemented Network Interface on the node. Implementers of this
-	// contract can put clean-up actions to remove half-implemented Network
-	// Interfaces in this function.
+	// half-implemented Network Interface on the node. Implementers of InterfaceManager
+	// can put clean-up actions to remove half-implemented Network Interfaces in
+	// this function.
 	ListRemoteIfcs() ([]RemoteNetIfc, error)
 }
 
 // LocalNetIfc describes a local Network Interface. It contains everything
-// Contract.CreateLocalIfc needs to create a Linux network interface and configure
+// InterfaceManager.CreateLocalIfc needs to create a Linux network interface and configure
 // networking state so that the Linux network interface can send/receive
 // VXLAN-tunneled traffic.
 type LocalNetIfc struct {
@@ -125,7 +123,7 @@ type LocalNetIfc struct {
 }
 
 // RemoteNetIfc describes a remote Network Interface. It contains everything
-// Contract.CreateRemoteIfc needs to configure networking state so that local
+// InterfaceManager.CreateRemoteIfc needs to configure networking state so that local
 // Network Interfaces can send VXLAN-tunneled traffic to the remote Network
 // Interface.
 type RemoteNetIfc struct {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package ovs defines a network fabric that implements k8s.io/examples/staging/kos/pkg/networkfabric.Contract .
+// Package ovs defines a network fabric that implements k8s.io/examples/staging/kos/pkg/networkfabric.InterfaceManager .
 //
 // The fabric is thread-safe.
 //

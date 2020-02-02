@@ -30,7 +30,7 @@ import (
 
 // Interface is the signature of functions that can be registered as network
 // fabric factories.
-type Interface func() (networkfabric.Contract, error)
+type Interface func() (networkfabric.InterfaceManager, error)
 
 // factoryRegistry associates netfabric names with the factory functions for
 // those netfabric. Init with a capacity of 1 because we expect that at least
@@ -53,7 +53,7 @@ func RegisterFactory(factory Interface, name string) {
 // NewNetFabricForName returns a network fabric created by the factory
 // registered under the given name. An error is returned if no such fabric is
 // found.
-func NewNetFabricForName(name string) (networkfabric.Contract, error) {
+func NewNetFabricForName(name string) (networkfabric.InterfaceManager, error) {
 	newNetfabric, nameIsRegistered := factoryRegistry[name]
 	if !nameIsRegistered {
 		var err error
