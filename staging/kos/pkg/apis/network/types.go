@@ -19,8 +19,206 @@ package network
 import (
 	"time"
 
+	fuzz "github.com/google/gofuzz"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// ExtendedObjectMeta has extra metadata for an API object.
+// This is maintained by the server, clients can not modify it.
+type ExtendedObjectMeta struct {
+	// Writes identifies the latest write to each part of the object.
+	// +listType=map
+	// +listMapKey=section
+	// +optional
+	Writes WriteSet
+}
+
+// WriteSet represents a map from section to time
+type WriteSet []ObjectWrite
+
+// ObjectWrite describes a write to part of an object
+type ObjectWrite struct {
+	// Section identifies the part of the object that was written.
+	// Each type of object is broken down into a type-specific set of
+	// sections.
+	Section string
+
+	// ServerTime is the time when the write was recorded at the apiserver
+	ServerTime Timestamp
+}
+
+// GetServerWriteTime returns the server time of the write to the
+// given section, or zero if there was none.
+func (writes WriteSet) GetServerWriteTime(section string) Timestamp {
+	return writes.GetWrite(section).ServerTime
+}
+
+// GetWrite returns the write to the given section, or zero if there
+// was none.
+func (writes WriteSet) GetWrite(section string) ObjectWrite {
+	for _, wr := range writes {
+		if wr.Section == section {
+			return wr
+		}
+	}
+	return ObjectWrite{}
+}
+
+// SetWrite produces a revised slice that includes the given write.
+// The input is not side-effected.
+func (writes WriteSet) SetWrite(section string, serverTime Timestamp) WriteSet {
+	n := len(writes)
+	var i int
+	for i = 0; i < n && writes[i].Section != section; i++ {
+	}
+	if i == n {
+		return append(WriteSet{{Section: section, ServerTime: serverTime}}, writes...)
+	}
+	return append(append(WriteSet{{Section: section, ServerTime: serverTime}}, writes[:i]...), writes[i+1:]...)
+}
+
+// Diff produces the subset of the given writes that do not overlap
+// with the other writes
+func (writes WriteSet) Diff(others WriteSet) WriteSet {
+	ans := make(WriteSet, 0, len(writes))
+	for _, wr := range writes {
+		owr := others.GetWrite(wr.Section)
+		if owr == (ObjectWrite{}) {
+			ans = append(ans, wr)
+		}
+	}
+	return ans
+}
+
+// UnionLeft produces the union of the receiver and the other writes
+// that do not overlap with the receiver
+func (writes WriteSet) UnionLeft(others WriteSet) WriteSet {
+	ans := append(WriteSet{}, writes...)
+	for _, owr := range others {
+		wr := ans.GetWrite(owr.Section)
+		if wr == (ObjectWrite{}) {
+			ans = append(ans, owr)
+		}
+	}
+	return ans
+}
+
+// UnionMin produces the union of the two write sets, keeping the
+// earlier time for sections written in both sets
+func (writes WriteSet) UnionMin(others WriteSet) WriteSet {
+	ans := others.Diff(writes)
+	for _, wr := range writes {
+		owr := others.GetWrite(wr.Section)
+		owr.ServerTime = owr.ServerTime.Min(wr.ServerTime)
+		ans = append(ans, owr)
+	}
+	return ans
+}
+
+// UnionMax produces the union of the two write sets, keeping the
+// later time for sections written in both sets
+func (writes WriteSet) UnionMax(others WriteSet) WriteSet {
+	ans := others.Diff(writes)
+	for _, wr := range writes {
+		owr := others.GetWrite(wr.Section)
+		owr.ServerTime = owr.ServerTime.Max(wr.ServerTime)
+		ans = append(ans, owr)
+	}
+	return ans
+}
+
+// Timestamp records a time and is not truncated when marshalled.  A
+// Timestamp does not record a location but is unambiguous; it is the
+// number of nanoseconds since Jan 1, 1970 began in Greenwich, UK.
+type Timestamp struct {
+	// Nano is that number.
+	Nano int64
+}
+
+// NewTime returns a wrapped instance of the provided time
+func NewTimestamp(time time.Time) Timestamp {
+	// Time::UnixNano() is unambiguous
+	return Timestamp{time.UnixNano()}
+}
+
+// Date returns the Timestamp corresponding to the supplied parameters
+// by wrapping time.Date.
+func Date(year int, month time.Month, day, hour, min, sec, nsec int, loc *time.Location) Timestamp {
+	return Timestamp{time.Date(year, month, day, hour, min, sec, nsec, loc).UnixNano()}
+}
+
+// Now returns the current local time.
+func Now() Timestamp {
+	return Timestamp{time.Now().UnixNano()}
+}
+
+// IsZero returns true if the value is zero.
+func (ts Timestamp) IsZero() bool {
+	return ts.Nano == 0
+}
+
+// Sub returns the difference between the two timestamps
+func (ts Timestamp) Sub(us Timestamp) time.Duration {
+	return time.Duration(ts.Nano - us.Nano)
+}
+
+// Before reports whether the time instant t is before u.
+func (ts Timestamp) Before(us Timestamp) bool {
+	return ts.Nano < us.Nano
+}
+
+// Equal reports whether the time instant t is equal to u.
+func (ts Timestamp) Equal(us Timestamp) bool {
+	return ts.Nano == us.Nano
+}
+
+// Min returns the earlier of the two, receiver if tie
+func (ts Timestamp) Min(us Timestamp) Timestamp {
+	if us.Before(ts) {
+		return us
+	}
+	return ts
+}
+
+// Max returns the later of the two, receiver if tie
+func (ts Timestamp) Max(us Timestamp) Timestamp {
+	if ts.Before(us) {
+		return us
+	}
+	return ts
+}
+
+// Unix returns the local time corresponding to the given Unix time
+// by wrapping time.Unix.
+func Unix(sec int64, nsec int64) Timestamp {
+	return Timestamp{time.Unix(sec, nsec).UnixNano()}
+}
+
+// Fuzz satisfies fuzz.Interface.
+func (ts *Timestamp) Fuzz(c fuzz.Continue) {
+	if ts == nil {
+		return
+	}
+	// Allow for about 1000 years of randomness.
+	ts.Nano = time.Unix(c.Rand.Int63n(1000*365*24*60*60), c.Rand.Int63n(1000000000)).UnixNano()
+}
+
+var _ fuzz.Interface = &Timestamp{}
+
+// String formats the timestamp after shifting into UTC
+func (ts Timestamp) String() string {
+	utc := ts.Time().In(time.UTC)
+	return utc.Format(MetaTimestampFormat)
+}
+
+// MetaTimestampFormat is the format used by Timestamp::String()
+const MetaTimestampFormat = time.RFC3339Nano
+
+// Time converts to a time.Time
+func (ts Timestamp) Time() time.Time {
+	return time.Unix(0, ts.Nano)
+}
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -60,6 +258,7 @@ type NetworkAttachmentSpec struct {
 	// and `mac`.
 	// PostCreateExec is immutable: attempts to update it will fail.
 	// +optional
+	// +patchStrategy=replace
 	PostCreateExec []string
 
 	// PostDeleteExec is a command to exec inside the attachment
@@ -73,6 +272,7 @@ type NetworkAttachmentSpec struct {
 	// deleted by then).  The same restrictions and variable
 	// expansions as for PostCreateExec are applied.
 	// +optional
+	// +patchStrategy=replace
 	PostDeleteExec []string
 }
 
@@ -126,16 +326,19 @@ type NetworkAttachmentStatus struct {
 type NetworkAttachmentErrors struct {
 	// IPAM holds errors about the IP Address Management for this attachment.
 	// +optional
+	// +patchStrategy=replace
 	IPAM []string
 
 	// Host holds errors from the node where this attachment is placed.
 	// +optional
+	// +patchStrategy=replace
 	Host []string
 }
 
 // ExecReport reports on what happened when a command was execd.
 type ExecReport struct {
 	// Command is the command whose execution is summarized by this ExecReport.
+	// +patchStrategy=replace
 	Command []string
 
 	// ExitStatus is the Linux exit status from the command, or a
@@ -150,7 +353,9 @@ type ExecReport struct {
 	StdErr string
 }
 
-// Equal tests whether the two referenced ExecReports say the same thing
+// Equiv tests whether the two referenced ExecReports say the same
+// thing within the available time precision.  The apiservers only
+// store time values with seconds precision.
 func (x *ExecReport) Equiv(y *ExecReport) bool {
 	if x == y {
 		return true
@@ -165,14 +370,29 @@ func (x *ExecReport) Equiv(y *ExecReport) bool {
 		x.StopTime.Time.Truncate(time.Second).Equal(y.StopTime.Time.Truncate(time.Second))
 }
 
+// The ExtendedObjectMeta sections for a NetworkAttachment
+const (
+	NASectionSpec       = "spec"
+	NASectionAddr       = "status.address"
+	NASectionImpl       = "status.impl"
+	NASectionExecReport = "status.execReport"
+)
+
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// NetworkAttachment is about a Linux network interface connected to a
+// Subnet.  The sections recorded in ExtendedObjectMeta are: spec,
+// status.address, status.impl, status.execReport.
 type NetworkAttachment struct {
 	metav1.TypeMeta
 
 	// +optional
 	metav1.ObjectMeta
+
+	// `extendedMetadata` adds non-standard object metadata
+	// +optional
+	ExtendedObjectMeta
 
 	Spec NetworkAttachmentSpec
 
@@ -219,14 +439,26 @@ type SubnetStatus struct {
 	Errors []string
 }
 
+// The ExtendedObjectMeta sections for a Subnet
+const (
+	SubnetSectionSpec   = "spec"
+	SubnetSectionStatus = "status"
+)
+
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// Subnet is about an IP subnet on a virtual network.  For
+// ExtendedObjectMeta the sections are: spec, status.
 type Subnet struct {
 	metav1.TypeMeta
 
 	// +optional
 	metav1.ObjectMeta
+
+	// `extendedMetadata` adds non-standard object metadata
+	// +optional
+	ExtendedObjectMeta
 
 	Spec SubnetSpec
 

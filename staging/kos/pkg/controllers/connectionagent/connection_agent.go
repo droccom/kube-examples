@@ -252,6 +252,9 @@ type ConnectionAgent struct {
 	// NetworkAttachment.CreationTimestamp to remote network interface creation latency
 	attachmentCreateToRemoteIfcHistogram prometheus.Histogram
 
+	// NASectionImpl to remote network interface creation latency
+	localImplToRemoteIfcHistogram prometheus.Histogram
+
 	// Durations of calls on network fabric
 	fabricLatencyHistograms *prometheus.HistogramVec
 
@@ -294,6 +297,15 @@ func New(node string,
 			Subsystem:   metricsSubsystem,
 			Name:        "attachment_create_to_remote_ifc_latency_seconds",
 			Help:        "Seconds from attachment CreationTimestamp to finished creating remote interface",
+			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
+			ConstLabels: map[string]string{"node": node},
+		})
+	localImplToRemoteIfcHistogram := prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   metricsNamespace,
+			Subsystem:   metricsSubsystem,
+			Name:        "attachment_impl_to_remote_ifc_latency_seconds",
+			Help:        "Seconds from attachment NASectionImpl Timestamp to finished creating remote interface",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
 		})
@@ -378,7 +390,7 @@ func New(node string,
 			Help:        "Number of queue worker threads",
 			ConstLabels: map[string]string{"node": node},
 		})
-	prometheus.MustRegister(attachmentCreateToLocalIfcHistogram, attachmentCreateToRemoteIfcHistogram, fabricLatencyHistograms, attachmentCreateToStatusHistogram, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount)
+	prometheus.MustRegister(attachmentCreateToLocalIfcHistogram, attachmentCreateToRemoteIfcHistogram, localImplToRemoteIfcHistogram, fabricLatencyHistograms, attachmentCreateToStatusHistogram, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount)
 
 	fabricNameCounts.With(prometheus.Labels{"fabric": netFabric.Name()}).Inc()
 	workerCount.Add(float64(workers))
@@ -409,6 +421,7 @@ func New(node string,
 		allowedPrograms:                      allowedPrograms,
 		attachmentCreateToLocalIfcHistogram:  attachmentCreateToLocalIfcHistogram,
 		attachmentCreateToRemoteIfcHistogram: attachmentCreateToRemoteIfcHistogram,
+		localImplToRemoteIfcHistogram:        localImplToRemoteIfcHistogram,
 		fabricLatencyHistograms:              fabricLatencyHistograms,
 		attachmentCreateToStatusHistogram:    attachmentCreateToStatusHistogram,
 		attachmentStatusHistograms:           attachmentStatusHistograms,
@@ -1057,7 +1070,7 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 		updatedAtt.Status.PostCreateExecReport)
 
 	if att.Status.HostIP == "" {
-		ca.attachmentCreateToStatusHistogram.Observe(tAfterUpdate.Truncate(time.Second).Sub(att.CreationTimestamp.Time).Seconds())
+		ca.attachmentCreateToStatusHistogram.Observe(updatedAtt.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
 	}
 
 	return nil
