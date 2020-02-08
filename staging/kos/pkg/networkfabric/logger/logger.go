@@ -36,6 +36,8 @@ const name = "logger"
 
 // Logger is a fake network interface fabric useful for debugging/testing. It
 // does nothing but logging.
+// TODO Add locking of VNI and IP pairs like the OvS fabric does, so that we
+// honor the k8s.io/examples/staging/kos/pkg/networkfabric.InterfaceManager contract.
 type logger struct {
 	localIfcsMutex sync.RWMutex
 	localIfcs      map[string]networkfabric.LocalNetIfc
@@ -48,7 +50,7 @@ func init() {
 	// register the logger network fabric factory in the network fabric factory
 	// registry, so that networkfabric pkg clients can instantiate network
 	// fabrics of type logger.
-	factory.RegisterFactory(func() (networkfabric.Interface, error) {
+	factory.RegisterFactory(func() (networkfabric.InterfaceManager, error) {
 		return &logger{
 			localIfcs:  make(map[string]networkfabric.LocalNetIfc),
 			remoteIfcs: make(map[string]networkfabric.RemoteNetIfc),
