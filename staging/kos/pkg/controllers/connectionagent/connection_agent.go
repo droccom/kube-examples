@@ -1070,7 +1070,7 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 		updatedAtt.Status.PostCreateExecReport)
 
 	if att.Status.HostIP == "" {
-		ca.attachmentCreateToStatusHistogram.Observe(updatedAtt.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
+		ca.attachmentCreateToStatusHistogram.Observe(updatedAtt.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
 	}
 
 	return nil

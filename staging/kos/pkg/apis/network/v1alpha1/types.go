@@ -84,8 +84,8 @@ func (writes WriteSet) SetWrite(section string, serverTime Timestamp) WriteSet {
 func (writes WriteSet) Diff(others WriteSet) WriteSet {
 	ans := make(WriteSet, 0, len(writes))
 	for _, wr := range writes {
-		owr, _ := others.GetWrite(wr.Section)
-		if owr == (ObjectWrite{}) {
+		_, found := others.GetWrite(wr.Section)
+		if !found {
 			ans = append(ans, wr)
 		}
 	}
