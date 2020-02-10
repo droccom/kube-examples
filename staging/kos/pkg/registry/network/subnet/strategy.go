@@ -107,9 +107,7 @@ func (*subnetStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Ob
 	newSubnet := obj.(*network.Subnet)
 	newSubnet.ExtendedObjectMeta = oldSubnet.ExtendedObjectMeta
 	now := network.Now()
-	if newSubnet.Spec != oldSubnet.Spec {
-		newSubnet.Writes = newSubnet.Writes.SetWrite(network.SubnetSectionSpec, now)
-	}
+	// the Spec is immutable, see ValidateUpdate
 	if newSubnet.Status.Validated != oldSubnet.Status.Validated || !SliceOfStringEqual(newSubnet.Status.Errors, oldSubnet.Status.Errors) {
 		newSubnet.Writes = newSubnet.Writes.SetWrite(network.SubnetSectionStatus, now)
 	}

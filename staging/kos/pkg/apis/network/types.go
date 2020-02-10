@@ -51,18 +51,19 @@ type ObjectWrite struct {
 // GetServerWriteTime returns the server time of the write to the
 // given section, or zero if there was none.
 func (writes WriteSet) GetServerWriteTime(section string) Timestamp {
-	return writes.GetWrite(section).ServerTime
+	wr, _ := writes.GetWrite(section)
+	return wr.ServerTime
 }
 
-// GetWrite returns the write to the given section, or zero if there
-// was none.
-func (writes WriteSet) GetWrite(section string) ObjectWrite {
+// GetWrite returns the write to the given section, and a bool
+// indicating whether there is one.
+func (writes WriteSet) GetWrite(section string) (ObjectWrite, bool) {
 	for _, wr := range writes {
 		if wr.Section == section {
-			return wr
+			return wr, true
 		}
 	}
-	return ObjectWrite{}
+	return ObjectWrite{}, false
 }
 
 // SetWrite produces a revised slice that includes the given write.
@@ -83,7 +84,7 @@ func (writes WriteSet) SetWrite(section string, serverTime Timestamp) WriteSet {
 func (writes WriteSet) Diff(others WriteSet) WriteSet {
 	ans := make(WriteSet, 0, len(writes))
 	for _, wr := range writes {
-		owr := others.GetWrite(wr.Section)
+		owr, _ := others.GetWrite(wr.Section)
 		if owr == (ObjectWrite{}) {
 			ans = append(ans, wr)
 		}
@@ -96,8 +97,8 @@ func (writes WriteSet) Diff(others WriteSet) WriteSet {
 func (writes WriteSet) UnionLeft(others WriteSet) WriteSet {
 	ans := append(WriteSet{}, writes...)
 	for _, owr := range others {
-		wr := ans.GetWrite(owr.Section)
-		if wr == (ObjectWrite{}) {
+		_, found := ans.GetWrite(owr.Section)
+		if !found {
 			ans = append(ans, owr)
 		}
 	}
@@ -109,9 +110,13 @@ func (writes WriteSet) UnionLeft(others WriteSet) WriteSet {
 func (writes WriteSet) UnionMin(others WriteSet) WriteSet {
 	ans := others.Diff(writes)
 	for _, wr := range writes {
-		owr := others.GetWrite(wr.Section)
-		owr.ServerTime = owr.ServerTime.Min(wr.ServerTime)
-		ans = append(ans, owr)
+		owr, found := others.GetWrite(wr.Section)
+		if found {
+			owr.ServerTime = owr.ServerTime.Min(wr.ServerTime)
+			ans = append(ans, owr)
+		} else {
+			ans = append(ans, wr)
+		}
 	}
 	return ans
 }
@@ -121,9 +126,13 @@ func (writes WriteSet) UnionMin(others WriteSet) WriteSet {
 func (writes WriteSet) UnionMax(others WriteSet) WriteSet {
 	ans := others.Diff(writes)
 	for _, wr := range writes {
-		owr := others.GetWrite(wr.Section)
-		owr.ServerTime = owr.ServerTime.Max(wr.ServerTime)
-		ans = append(ans, owr)
+		owr, found := others.GetWrite(wr.Section)
+		if found {
+			owr.ServerTime = owr.ServerTime.Max(wr.ServerTime)
+			ans = append(ans, owr)
+		} else {
+			ans = append(ans, wr)
+		}
 	}
 	return ans
 }

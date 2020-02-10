@@ -97,7 +97,8 @@ func (networkattachmentStrategy) PrepareForUpdate(ctx context.Context, obj, old 
 	newNA := obj.(*network.NetworkAttachment)
 	newNA.ExtendedObjectMeta = oldNA.ExtendedObjectMeta
 	now := network.Now()
-	if oldNA.Spec.Node != newNA.Spec.Node || oldNA.Spec.Subnet != newNA.Spec.Subnet || !SliceOfStringEqual(oldNA.Spec.PostCreateExec, newNA.Spec.PostCreateExec) || !SliceOfStringEqual(oldNA.Spec.PostDeleteExec, newNA.Spec.PostDeleteExec) {
+	// ValidateUpdate insists that the only Spec field that can change is PostDeleteExec
+	if !SliceOfStringEqual(oldNA.Spec.PostDeleteExec, newNA.Spec.PostDeleteExec) {
 		newNA.Writes = newNA.Writes.SetWrite(network.NASectionSpec, now)
 	}
 	if oldNA.Status.LockUID != newNA.Status.LockUID || oldNA.Status.AddressVNI != newNA.Status.AddressVNI || oldNA.Status.IPv4 != newNA.Status.IPv4 || !SliceOfStringEqual(oldNA.Status.Errors.IPAM, newNA.Status.Errors.IPAM) {
@@ -148,20 +149,8 @@ func (networkattachmentStrategy) ValidateUpdate(ctx context.Context, obj, old ru
 	if newNa.Spec.Subnet != oldNa.Spec.Subnet {
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "subnet"), immutableFieldMsg))
 	}
-	if differ(newNa.Spec.PostCreateExec, oldNa.Spec.PostCreateExec) {
+	if !SliceOfStringEqual(newNa.Spec.PostCreateExec, oldNa.Spec.PostCreateExec) {
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "postCreateExec"), immutableFieldMsg))
 	}
 	return errs
-}
-
-func differ(s1, s2 []string) bool {
-	if len(s1) != len(s2) {
-		return true
-	}
-	for i := range s1 {
-		if s1[i] != s2[i] {
-			return true
-		}
-	}
-	return false
 }
