@@ -97,10 +97,32 @@ func (*subnetStrategy) NamespaceScoped() bool {
 
 func (*subnetStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	subnet := obj.(*network.Subnet)
+	subnet.ExtendedObjectMeta = network.ExtendedObjectMeta{}
+	subnet.Writes = subnet.Writes.SetWrite(network.SubnetSectionSpec, network.Now())
 	subnet.Status = network.SubnetStatus{}
 }
 
 func (*subnetStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	oldSubnet := old.(*network.Subnet)
+	newSubnet := obj.(*network.Subnet)
+	newSubnet.ExtendedObjectMeta = oldSubnet.ExtendedObjectMeta
+	now := network.Now()
+	// the Spec is immutable, see ValidateUpdate
+	if newSubnet.Status.Validated != oldSubnet.Status.Validated || !SliceOfStringEqual(newSubnet.Status.Errors, oldSubnet.Status.Errors) {
+		newSubnet.Writes = newSubnet.Writes.SetWrite(network.SubnetSectionStatus, now)
+	}
+}
+
+func SliceOfStringEqual(x, y []string) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for i, xi := range x {
+		if xi != y[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (ss *subnetStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {

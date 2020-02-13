@@ -159,7 +159,7 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Subsystem: metricsSubsystem,
 			Name:      "attachment_create_to_address_latency_seconds",
 			Help:      "Latency from attachment CreationTimestamp to return from status update, in seconds",
-			Buckets:   []float64{-1, 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
+			Buckets:   []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
 		})
 
 	attachmentUpdateHistograms := prometheus.NewHistogramVec(
@@ -781,9 +781,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	tAfter := time.Now()
 	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(statusErrs) > 0), "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
-		t1 := att.CreationTimestamp.Time
-		t2 := tAfter.Truncate(time.Second)
-		deltaS := t2.Sub(t1).Seconds()
+		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds()
 		ctlr.attachmentCreateToAddressHistogram.Observe(deltaS)
 		if len(statusErrs) > 0 {
 			klog.V(4).Infof("Recorded errors %v in status of %s/%s, old ResourceVersion=%s, new ResourceVersion=%s", statusErrs, ns, name, att.ResourceVersion, att3.ResourceVersion)

@@ -87,10 +87,41 @@ func (networkattachmentStrategy) NamespaceScoped() bool {
 
 func (networkattachmentStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	na := obj.(*network.NetworkAttachment)
+	na.ExtendedObjectMeta = network.ExtendedObjectMeta{}
+	na.Writes = na.Writes.SetWrite(network.NASectionSpec, network.Now())
 	na.Status = network.NetworkAttachmentStatus{}
 }
 
 func (networkattachmentStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	oldNA := old.(*network.NetworkAttachment)
+	newNA := obj.(*network.NetworkAttachment)
+	newNA.ExtendedObjectMeta = oldNA.ExtendedObjectMeta
+	now := network.Now()
+	// ValidateUpdate insists that the only Spec field that can change is PostDeleteExec
+	if !SliceOfStringEqual(oldNA.Spec.PostDeleteExec, newNA.Spec.PostDeleteExec) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionSpec, now)
+	}
+	if oldNA.Status.LockUID != newNA.Status.LockUID || oldNA.Status.AddressVNI != newNA.Status.AddressVNI || oldNA.Status.IPv4 != newNA.Status.IPv4 || !SliceOfStringEqual(oldNA.Status.Errors.IPAM, newNA.Status.Errors.IPAM) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionAddr, now)
+	}
+	if oldNA.Status.MACAddress != newNA.Status.MACAddress || oldNA.Status.IfcName != newNA.Status.IfcName || oldNA.Status.HostIP != newNA.Status.HostIP || !SliceOfStringEqual(oldNA.Status.Errors.Host, newNA.Status.Errors.Host) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionImpl, now)
+	}
+	if !oldNA.Status.PostCreateExecReport.Equiv(newNA.Status.PostCreateExecReport) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionExecReport, now)
+	}
+}
+
+func SliceOfStringEqual(x, y []string) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for i, xi := range x {
+		if xi != y[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (networkattachmentStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {
@@ -118,20 +149,8 @@ func (networkattachmentStrategy) ValidateUpdate(ctx context.Context, obj, old ru
 	if newNa.Spec.Subnet != oldNa.Spec.Subnet {
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "subnet"), immutableFieldMsg))
 	}
-	if differ(newNa.Spec.PostCreateExec, oldNa.Spec.PostCreateExec) {
+	if !SliceOfStringEqual(newNa.Spec.PostCreateExec, oldNa.Spec.PostCreateExec) {
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "postCreateExec"), immutableFieldMsg))
 	}
 	return errs
-}
-
-func differ(s1, s2 []string) bool {
-	if len(s1) != len(s2) {
-		return true
-	}
-	for i := range s1 {
-		if s1[i] != s2[i] {
-			return true
-		}
-	}
-	return false
 }
