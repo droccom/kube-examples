@@ -628,6 +628,8 @@ var kubeconfigPath = flag.String("kubeconfig", "", "Path to kubeconfig file")
 var numAttachments = flag.Int("num-attachments", 450, "Total number of attachments to create")
 var threads = flag.Uint64("threads", 1, "Total number of threads to use")
 var targetRate = flag.Float64("rate", 10, "Target aggregate rate, in ops/sec")
+var opsDistribution = flag.String("ops-distribution", steadyDistribution, "distribution of ops on attachments (\""+steadyDistribution+"\" or \""+poissonDistribution+"\")")
+var dumpOpsTimes = flag.Bool("dump-ops-times", false, "print file with timing of attachments operations")
 var subnetSizeFactor = flag.Float64("subnet-size-factor", 1.0, "size each subnet for this factor times the number of addresses needed")
 var onlyNode = flag.String("only-node", "", "node, if any, to be the exclusive location of attachments")
 var nodeLabelSelector = flag.String("node-label-selector", "", "label-selector, if any, to add to restriction role.kos.example.com/workload=true on which nodes get attachments")
@@ -670,7 +672,12 @@ func main() {
 		os.Exit(5)
 	}
 
-	glog.Warningf("Driver parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
+	if *opsDistribution != steadyDistribution && *opsDistribution != poissonDistribution {
+		glog.Errorf("Got unknown distribution \"%s\" for attachments ops, only \"%s\" and \"%s\" are supported.", *opsDistribution, steadyDistribution, poissonDistribution)
+		os.Exit(6)
+	}
+
+	glog.Warningf("Driver parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
 
 	vni0 := rand.Intn(32)*65536 + 1 // allow 64Ki VNIs in a run without overflowing the 21 bit limit
 	glog.Warningf("First VNI is %06x\n", vni0)
@@ -1031,14 +1038,23 @@ func main() {
 			glog.Warningf("Minimum nominal lifetime = %g sec\n", minLifetime)
 		}
 	}
+	threadIDtoAttsOpsSchedule := newOpsSchedule(*opsDistribution, opPeriod, uint64(*numAttachments*2), *threads)
+	if *dumpOpsTimes {
+		if err := printCSVOpsTimes(threadIDtoAttsOpsSchedule, *targetRate, *opsDistribution, outputDir); err != nil {
+			glog.Errorf("Error while dumping attachments ops times to file: %s", err)
+			os.Exit(8)
+		}
+	}
 	t0 := time.Now()
 	for i := uint64(0); i < *threads; i++ {
+		thdSched := threadIDtoAttsOpsSchedule[i]
+		delete(threadIDtoAttsOpsSchedule, i)
 		wg.Add(1)
 		go func(thd uint64) {
 			defer wg.Done()
 			numAttsToCreate := (uint64(*numAttachments) + *threads - 1 - thd) / (*threads)
 			slots := selectSlots(int(thd), int(*threads), vnAttachments)
-			RunThread(kClientset, stopCh, slots, nodeList.Items, nattNameFmt, *runID, t0, numAttsToCreate, thd+1, *threads, opPeriod, *roundRobin, *waitAfterCreate != 0)
+			RunThread(kClientset, stopCh, slots, nodeList.Items, nattNameFmt, *runID, thdSched, t0, numAttsToCreate, thd+1, *threads, *roundRobin, *waitAfterCreate != 0)
 		}(i)
 	}
 	wg.Wait()
@@ -1098,7 +1114,7 @@ func selectSlots(thd, numThreads int, from []VirtNetAttachment) []VirtNetAttachm
 	return assignedSlots
 }
 
-func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, tbase time.Time, numAttsToCreate, thd, numThreads uint64, opPeriod float64, roundRobin, justCreate bool) {
+func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, opsTimes threadOpsSchedule, tbase time.Time, numAttsToCreate, thd, numThreads uint64, roundRobin, justCreate bool) {
 	glog.Warningf("Thread start: thd=%d, numAttachments=%d, stride=%d\n", thd, numAttsToCreate, numThreads)
 	var iCreate, iDelete uint64
 	var workLen = uint64(len(work))
@@ -1107,7 +1123,7 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 	for iDelete < numAttsToCreate {
 		for {
 			xd := atomic.AddInt64(&xtraDelayI, 0)
-			dt := float64((iCreate+iDelete)*numThreads+thd) * opPeriod * float64(time.Second)
+			dt := opsTimes[iCreate+iDelete]
 			targt := tbase.Add(time.Duration(int64(dt) + xd))
 			now := time.Now()
 			if !targt.After(now) {
@@ -1296,4 +1312,34 @@ func withRetries(thunk func() bool, minWait, maxWait time.Duration, stopCh <-cha
 		}
 	}
 	return true
+}
+
+func printCSVOpsTimes(opsTimes map[uint64]threadOpsSchedule, rate float64, distribution, outputDir string) (err error) {
+	opsTimesFilename := filepath.Join(outputDir, "attachments-ops-times.csv")
+	var opsTimesCSVFile *os.File
+	opsTimesCSVFile, err = os.Create(opsTimesFilename)
+	if err != nil {
+		return
+	}
+	defer func() {
+		cerr := opsTimesCSVFile.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+	header := fmt.Sprintf("\"distribution: %s, rate: %g\"\n\"cell(i, j > 0) = dt in seconds at which ops j for thread i must take place wrt start of operations\"\n", distribution, rate)
+	if _, err = opsTimesCSVFile.Write([]byte(header)); err != nil {
+		return
+	}
+	for thd := 0; thd < len(opsTimes); thd++ {
+		thdTimes := opsTimes[uint64(thd)]
+		csvRow := fmt.Sprintf("thd %d", thd+1)
+		for _, dtNanos := range thdTimes {
+			csvRow = fmt.Sprintf("%s, %g", csvRow, float64(dtNanos)/float64(time.Second))
+		}
+		if _, err = opsTimesCSVFile.Write([]byte(csvRow + "\n")); err != nil {
+			return
+		}
+	}
+	return
 }
