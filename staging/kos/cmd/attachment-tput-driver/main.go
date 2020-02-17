@@ -632,7 +632,7 @@ var opsDistribution = flag.String("ops-distribution", steadyDistribution, "distr
 var dumpOpsTimes = flag.Bool("dump-ops-times", false, "print file with timing of attachments operations")
 var subnetSizeFactor = flag.Float64("subnet-size-factor", 1.0, "size each subnet for this factor times the number of addresses needed")
 var onlyNode = flag.String("only-node", "", "node, if any, to be the exclusive location of attachments")
-var nodeLabelSelector = flag.String("node-label-selector", "", "label-selector, if any, to add to restriction role.kos.example.com/workload=true on which nodes get attachments")
+var nodeLabelSelector = flag.String("node-label-selector", "role.kos.example.com/workload=true", "label-selector, if any, to restrict which nodes get attachments")
 
 var runID = flag.String("runid", "", "unique ID of this run (default is randomly generated)")
 
@@ -980,12 +980,8 @@ func main() {
 	vnAttachments = shuffle(vnAttachments)
 	vnAttachments = shuffle(vnAttachments)
 
-	fullNodeLabelSelector := "role.kos.example.com/workload=true"
-	if len(*nodeLabelSelector) > 0 {
-		fullNodeLabelSelector = fullNodeLabelSelector + "," + *nodeLabelSelector
-	}
 	nodeList, err := urClientset.CoreV1().Nodes().List(metav1.ListOptions{
-		LabelSelector: fullNodeLabelSelector})
+		LabelSelector: *nodeLabelSelector})
 	if err != nil {
 		glog.Errorf("Failed to get list of nodes: %s\n", err.Error())
 		os.Exit(30)
