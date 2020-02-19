@@ -296,7 +296,7 @@ The driver has two kinds of output: data files and `glog` logging.
 
 For the data files, the driver creates a directory under the current
 working directory.  The new directory's name is the same as the "run
-ID" (which is checked for safety).  The driver always writes three data
+ID" (which is checked for safety).  The driver writes at least three data
 files into that directory.  One holds the result of scraping the driver's
 Prometheus metrics.  The other two are the size distributions described
 above, in CSV format. Via a flag (disabled by default), users can make

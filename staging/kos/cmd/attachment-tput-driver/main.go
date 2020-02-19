@@ -1034,23 +1034,21 @@ func main() {
 			glog.Warningf("Minimum nominal lifetime = %g sec\n", minLifetime)
 		}
 	}
-	threadIDtoAttsOpsSchedule := newOpsSchedule(*opsDistribution, opPeriod, uint64(*numAttachments*2), *threads)
+	attsOpsSchedule := newOpsSchedule(*opsDistribution, opPeriod, uint64(*numAttachments*2))
 	if *dumpOpsTimes {
-		if err := printCSVOpsTimes(threadIDtoAttsOpsSchedule, *targetRate, *opsDistribution, outputDir); err != nil {
+		if err := printCSVOpsTimes(attsOpsSchedule, *targetRate, *threads, *opsDistribution, outputDir); err != nil {
 			glog.Errorf("Error while dumping attachments ops times to file: %s", err)
 			os.Exit(8)
 		}
 	}
 	t0 := time.Now()
 	for i := uint64(0); i < *threads; i++ {
-		thdSched := threadIDtoAttsOpsSchedule[i]
-		delete(threadIDtoAttsOpsSchedule, i)
 		wg.Add(1)
 		go func(thd uint64) {
 			defer wg.Done()
 			numAttsToCreate := (uint64(*numAttachments) + *threads - 1 - thd) / (*threads)
 			slots := selectSlots(int(thd), int(*threads), vnAttachments)
-			RunThread(kClientset, stopCh, slots, nodeList.Items, nattNameFmt, *runID, thdSched, t0, numAttsToCreate, thd+1, *threads, *roundRobin, *waitAfterCreate != 0)
+			RunThread(kClientset, stopCh, slots, nodeList.Items, nattNameFmt, *runID, attsOpsSchedule, t0, numAttsToCreate, thd+1, *threads, *roundRobin, *waitAfterCreate != 0)
 		}(i)
 	}
 	wg.Wait()
@@ -1110,7 +1108,7 @@ func selectSlots(thd, numThreads int, from []VirtNetAttachment) []VirtNetAttachm
 	return assignedSlots
 }
 
-func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, opsTimes threadOpsSchedule, tbase time.Time, numAttsToCreate, thd, numThreads uint64, roundRobin, justCreate bool) {
+func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work []VirtNetAttachment, nodes []k8sv1.Node, nattNameFmt, runID string, opsTimes OpsSchedule, tbase time.Time, numAttsToCreate, thd, numThreads uint64, roundRobin, justCreate bool) {
 	glog.Warningf("Thread start: thd=%d, numAttachments=%d, stride=%d\n", thd, numAttsToCreate, numThreads)
 	var iCreate, iDelete uint64
 	var workLen = uint64(len(work))
@@ -1119,7 +1117,7 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 	for iDelete < numAttsToCreate {
 		for {
 			xd := atomic.AddInt64(&xtraDelayI, 0)
-			dt := opsTimes[iCreate+iDelete]
+			dt := opsTimes[(iCreate+iDelete)*numThreads+thd-1]
 			targt := tbase.Add(time.Duration(int64(dt) + xd))
 			now := time.Now()
 			if !targt.After(now) {
@@ -1310,7 +1308,7 @@ func withRetries(thunk func() bool, minWait, maxWait time.Duration, stopCh <-cha
 	return true
 }
 
-func printCSVOpsTimes(opsTimes map[uint64]threadOpsSchedule, rate float64, distribution, outputDir string) (err error) {
+func printCSVOpsTimes(opsTimes OpsSchedule, rate float64, numThreads uint64, distribution, outputDir string) (err error) {
 	opsTimesFilename := filepath.Join(outputDir, "attachments-ops-times.csv")
 	var opsTimesCSVFile *os.File
 	opsTimesCSVFile, err = os.Create(opsTimesFilename)
@@ -1323,17 +1321,13 @@ func printCSVOpsTimes(opsTimes map[uint64]threadOpsSchedule, rate float64, distr
 			err = cerr
 		}
 	}()
-	header := fmt.Sprintf("\"distribution: %s, rate: %g\"\n\"cell(i, j > 0) = dt in seconds at which ops j for thread i must take place wrt start of operations\"\n", distribution, rate)
+	header := fmt.Sprintf("\"distribution: %s, rate: %g\"\nop,thd,dt from start (secs)\n", distribution, rate)
 	if _, err = opsTimesCSVFile.Write([]byte(header)); err != nil {
 		return
 	}
-	for thd := 0; thd < len(opsTimes); thd++ {
-		thdTimes := opsTimes[uint64(thd)]
-		csvRow := fmt.Sprintf("thd %d", thd+1)
-		for _, dtNanos := range thdTimes {
-			csvRow = fmt.Sprintf("%s, %g", csvRow, float64(dtNanos)/float64(time.Second))
-		}
-		if _, err = opsTimesCSVFile.Write([]byte(csvRow + "\n")); err != nil {
+	for i, dt := range opsTimes {
+		_, err = opsTimesCSVFile.Write([]byte(fmt.Sprintf("%d,%d,%g\n", i+1, (uint64(i)%numThreads)+1, float64(dt)/float64(time.Second))))
+		if err != nil {
 			return
 		}
 	}
