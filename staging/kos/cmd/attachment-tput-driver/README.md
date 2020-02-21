@@ -72,25 +72,39 @@ to stdout and those files.
 
 ## Timing and threading
 
-This driver aims to issue requests to create and delete
-NetworkAttachment objects steadily, at a given rate.  Once a
-NetworkAttachment becomes "ready" it is normally tested with ping, but
-this can optionally be disabled.
+The driver defines flags that let users customize the timing with which
+requests to create and delete NetworkAttachments are issued.  Currently
+operations on NetworkAttachments can either happen with a constant period
+or according to a Poisson process; in both cases a driver parameter lets
+users specify the rate of operations.  Once a NetworkAttachment becomes
+"ready" it is normally tested with ping, but this can optionally be
+disabled.
 
 This driver issues NetworkAttachment creation and deletion requests
 from a given number of threads.  The intended schedule of operations
-for each thread is fixed by the driver's parameters.  The parameters
-determine an intended time for each request to be issued.  If a thread
-is ready to issue a request before its time then the thread will sleep
-until the appointed time.  If a thread is not ready until after the
-appointed time then the request will be issued as soon as the thread
-can.
+for each thread is determined by the driver's parameters.  From the
+parameters, the driver determines an intended time for each request to
+be issued.  If a thread is ready to issue a request before its time then
+the thread will sleep until the appointed time.  If a thread is not ready
+until after the appointed time then the request will be issued as soon as
+the thread can.  Via a driver parameter (disabled by default), users can
+make the driver print a CSV file containing the intended timing of all
+operations for each thread. In such file, the time for each operation is
+not an absolute time, but an offset in seconds with respect to the instant
+at which operations on NetworkAttachments start.
 
-The timings of the threads are staggered.  That is, for a given
-operation rate R, the first thread aims to issue its requests at
-elapsed times `1/R`, `(1+num_threads)/R`, `(1+2*num_threads)/R`, ...;
-the second thread aims to issue its requests at elapsed times `2/R`,
-`(2+num_threads)/R`, `(2+2*num_threads)/R`, ...; and so on.
+The timings of the threads are staggered.  More precisely, if requests
+are issued with a constant period 1/R, the first thread aims to issue its
+requests at elapsed times `1/R`, `(1+num_threads)/R`, `(1+2*num_threads)/R`,
+...; the second thread aims to issue its requests at elapsed times `2/R`,
+`(2+num_threads)/R`, `(2+2*num_threads)/R`, ...; and so on.  Likewise, if
+requests are issued according to a Poisson process and the instants at which
+they must be issued are t<sub>0</sub>, t<sub>1</sub>,..., t<sub>m</sub>,
+the first thread aims to issue its requests at
+t<sub>0</sub>, t<sub>num_threads</sub>, t<sub>2\*num_threads</sub>,...;
+the second thread aims to issue its requests at
+t<sub>1</sub>, t<sub>1 + num_threads</sub>, t<sub>1 + 2\*num_threads</sub>,...;
+and so on.
 
 To minimize the number of non-full ping tests (see below), delays are
 sometimes introduced into the time series described above.  If, at the
@@ -282,10 +296,12 @@ The driver has two kinds of output: data files and `glog` logging.
 
 For the data files, the driver creates a directory under the current
 working directory.  The new directory's name is the same as the "run
-ID" (which is checked for safety).  The driver writes three data files
-into that directory.  One holds the result of scraping the driver's
-Prometheus metrics.  The other two are the size distributions
-described above, in CSV format.
+ID" (which is checked for safety).  The driver writes at least three data
+files into that directory.  One holds the result of scraping the driver's
+Prometheus metrics.  The other two are the size distributions described
+above, in CSV format. Via a flag (disabled by default), users can make
+the driver write an additional file with the timing of creates and deletes
+on NetwotkAttachments, as described in section [Timing and Threading](#timing-and-threading)
 
 For logging the driver produces a great volume of log messages with
 the `glog` severity `INFO`, including every object creation and
