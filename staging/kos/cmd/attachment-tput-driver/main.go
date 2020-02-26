@@ -102,6 +102,18 @@ var (
 	failedDeletes              prometheus.Counter
 )
 
+// The following vars are used by threads to compute the time at which the next
+// op should take place.
+var (
+	// Each thread must perform at least `opsPerThdMin` ops on attachments
+	// (but some threads will perform more).
+	opsPerThdMin uint64
+	// `attsLeft` is the number of attachments that would be "in excess" if we
+	// wanted all threads to manage (create and delete) the same number of
+	// attachments.
+	attsLeft uint64
+)
+
 type TrackingHistogram interface {
 	prometheus.Histogram
 	ObserveAt(x float64, ns, name string)
@@ -1041,6 +1053,8 @@ func main() {
 			os.Exit(8)
 		}
 	}
+	opsPerThdMin = 2 * (uint64(*numAttachments) / *threads)
+	attsLeft = uint64(*numAttachments) % *threads
 	t0 := time.Now()
 	for i := uint64(0); i < *threads; i++ {
 		wg.Add(1)
@@ -1116,8 +1130,14 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 	createAllowed := true
 	for iDelete < numAttsToCreate {
 		for {
+			var nextOpIdx uint64
+			if iCreate+iDelete < opsPerThdMin {
+				nextOpIdx = (iCreate+iDelete)*numThreads + thd - 1
+			} else {
+				nextOpIdx = opsPerThdMin*numThreads + ((iCreate+iDelete)-opsPerThdMin)*attsLeft + thd - 1
+			}
+			dt := opsTimes[nextOpIdx]
 			xd := atomic.AddInt64(&xtraDelayI, 0)
-			dt := opsTimes[(iCreate+iDelete)*numThreads+thd-1]
 			targt := tbase.Add(time.Duration(int64(dt) + xd))
 			now := time.Now()
 			if !targt.After(now) {

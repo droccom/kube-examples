@@ -58,16 +58,14 @@ func newOpsSchedule(opsDistribution string, opsPeriodSecs float64, totalOps uint
 	var dtFromStart time.Duration
 	for i := uint64(0); i < totalOps; i++ {
 		if opsDistribution == poissonDistribution {
+			expDistRate1 := rand.ExpFloat64()
+			if expDistRate1 > 1000 {
+				// Truncate to avoid impractically large intervals between ops.
+				expDistRate1 = 1000
+			}
 			// The time in secs between an op and the next one is given by the
 			// exponential distribution with rate `1/opsPeriodSecs`.
-			dtFromPreviousOpSecs := opsPeriodSecs * rand.ExpFloat64()
-			if dtFromPreviousOpSecs > 1000 {
-				// Truncate dt from previous op because we only care about high
-				// rates and we want to minimize the risk of overflowing
-				// dtFromPreviousOpNanos.
-				dtFromPreviousOpSecs = 1000
-			}
-			dtFromStart += time.Duration(float64(time.Second) * dtFromPreviousOpSecs)
+			dtFromStart += time.Duration(float64(time.Second) * opsPeriodSecs * expDistRate1)
 		} else {
 			// The ops on attachments happen with a constant period.
 			dtFromStart += time.Duration(float64(time.Second) * opsPeriodSecs)
