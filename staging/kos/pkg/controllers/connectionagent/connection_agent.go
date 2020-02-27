@@ -720,10 +720,10 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 // The third return argument tells clients whether they should stop working on
 // the NetworkAttachment. It is set to true if an unexpected error occurs or if
 // the current state of the NetworkAttachment cannot be unambiguously determined.
-func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, relevanceTime time.Time, haltProcessing bool) {
+func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time, haltProcessing bool) {
 	// Get the lister backed by the Informer's cache where the NetworkAttachment
 	// was seen. There could more than one.
-	attLister, relevanceTime, moreThanOneLister := ca.getLister(attNSN)
+	attLister, vnRelevanceTime, moreThanOneLister := ca.getLister(attNSN)
 
 	if moreThanOneLister {
 		// If more than one lister was found the NetworkAttachment was seen in
@@ -752,7 +752,7 @@ func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) 
 	return
 }
 
-func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, relevanceTime time.Time, moreThanOneVNI bool) {
+func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, vnRelevanceTime time.Time, moreThanOneVNI bool) {
 	ca.s1VirtNetsState.RLock()
 	defer ca.s1VirtNetsState.RUnlock()
 
@@ -776,7 +776,7 @@ func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslis
 	} else {
 		attStage1VNState := ca.s1VirtNetsState.vniToVNState[attVNI]
 		lister = attStage1VNState.remoteAttsLister
-		relevanceTime = attStage1VNState.relevanceTime
+		vnRelevanceTime = attStage1VNState.relevanceTime
 	}
 	return
 }
