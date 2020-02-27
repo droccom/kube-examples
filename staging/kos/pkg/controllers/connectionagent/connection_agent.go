@@ -104,6 +104,10 @@ type stage1VirtualNetworkState struct {
 	// Lister used by workers to retrieve the NetworkAttachment they're
 	// processing.
 	remoteAttsLister koslisterv1a1.NetworkAttachmentNamespaceLister
+
+	// The time at which the virtual network became relevant. Used to compute
+	// Promtheus latencies.
+	relevanceTime time.Time
 }
 
 // stage1VirtualNetworksState is the first stage of the state associated with
@@ -673,7 +677,7 @@ func (ca *ConnectionAgent) processQueueItem(attNSN k8stypes.NamespacedName) {
 }
 
 func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedName) error {
-	att, haltProcessing := ca.getNetworkAttachment(attNSN)
+	att, vnRelevanceTime, haltProcessing := ca.getNetworkAttachment(attNSN)
 	if haltProcessing {
 		return nil
 	}
@@ -685,7 +689,7 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 	klog.V(3).Infof("Synced stage2VNState for attachment %s.", attNSN)
 
 	// Create/update/delete the network interface of the NetworkAttachment.
-	ifc, statusErrs, err := ca.syncNetworkInterface(attNSN, att)
+	ifc, statusErrs, err := ca.syncNetworkInterface(attNSN, att, vnRelevanceTime)
 	if err != nil {
 		return err
 	}
@@ -710,14 +714,16 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 
 // getNetworkAttachment attempts to determine the univocal version of the
 // NetworkAttachment with namespaced name `attNSN`. If it succeeds it returns
-// the attachment (nil if it was deleted). The second return argument tells
-// clients whether they should stop working on the NetworkAttachment. It is set
-// to true if an unexpected error occurs or if the current state of the
-// NetworkAttachment cannot be unambiguously determined.
-func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, haltProcessing bool) {
+// the attachment (nil if it was deleted). The second return argument is the
+// time at which the virtual network the NetworkAttachment is in became relevant
+// on this node if the NetworkAttachment is remote (otherwise it is irrelvant).
+// The third return argument tells clients whether they should stop working on
+// the NetworkAttachment. It is set to true if an unexpected error occurs or if
+// the current state of the NetworkAttachment cannot be unambiguously determined.
+func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, relevanceTime time.Time, haltProcessing bool) {
 	// Get the lister backed by the Informer's cache where the NetworkAttachment
 	// was seen. There could more than one.
-	attLister, moreThanOneLister := ca.getLister(attNSN)
+	attLister, relevanceTime, moreThanOneLister := ca.getLister(attNSN)
 
 	if moreThanOneLister {
 		// If more than one lister was found the NetworkAttachment was seen in
@@ -746,7 +752,7 @@ func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) 
 	return
 }
 
-func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, moreThanOneVNI bool) {
+func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, relevanceTime time.Time, moreThanOneVNI bool) {
 	ca.s1VirtNetsState.RLock()
 	defer ca.s1VirtNetsState.RUnlock()
 
@@ -770,6 +776,7 @@ func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslis
 	} else {
 		attStage1VNState := ca.s1VirtNetsState.vniToVNState[attVNI]
 		lister = attStage1VNState.remoteAttsLister
+		relevanceTime = attStage1VNState.relevanceTime
 	}
 	return
 }
@@ -871,7 +878,8 @@ func (ca *ConnectionAgent) initStage1VNState(vni uint32, remAttsLister koslister
 
 	s1VNS := &stage1VirtualNetworkState{
 		remoteAtts:       make(map[string]struct{}),
-		remoteAttsLister: remAttsLister}
+		remoteAttsLister: remAttsLister,
+		relevanceTime:    time.Now()}
 	ca.s1VirtNetsState.vniToVNState[vni] = s1VNS
 	return s1VNS
 }
@@ -985,7 +993,7 @@ func (ca *ConnectionAgent) updateS1VNState(att k8stypes.NamespacedName, vni uint
 	return
 }
 
-func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, att *netv1a1.NetworkAttachment) (ifc networkInterface, statusErrs sliceOfString, err error) {
+func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time) (ifc networkInterface, statusErrs sliceOfString, err error) {
 	oldIfc, oldIfcFound := ca.getNetworkInterface(attNSN)
 	oldIfcCanBeUsed := oldIfcFound && oldIfc.canBeOwnedBy(att, ca.node)
 
@@ -1014,7 +1022,7 @@ func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, 
 	if att.Spec.Node == ca.node {
 		ifc, statusErrs, err = ca.createLocalNetworkInterface(att)
 	} else {
-		ifc, err = ca.createRemoteNetworkInterface(att)
+		ifc, err = ca.createRemoteNetworkInterface(att, vnRelevanceTime)
 	}
 	if err == nil {
 		ca.assignNetworkInterface(attNSN, ifc)
