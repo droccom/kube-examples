@@ -75,10 +75,13 @@ to stdout and those files.
 The driver defines flags that let users customize the timing with which
 requests to create and delete NetworkAttachments are issued.  Currently
 operations on NetworkAttachments can either happen with a constant period
-or according to a Poisson process; in both cases a driver parameter lets
-users specify the rate of operations.  Once a NetworkAttachment becomes
-"ready" it is normally tested with ping, but this can optionally be
-disabled.
+or according to an approximated Poisson process; in both cases a driver
+parameter lets users specify the average rate of operations.  The Poisson
+process is approximated because the interval between two successive arrivals
+is given by an exponential distribution truncated to `1000/lambda secs`
+instead of a real exponential distribution.  Once a NetworkAttachment
+becomes "ready" it is normally tested with ping, but this can optionally
+be disabled.
 
 This driver issues NetworkAttachment creation and deletion requests
 from a given number of threads.  The intended schedule of operations
