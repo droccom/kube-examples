@@ -49,6 +49,7 @@ import (
 	koslisterv1a1 "k8s.io/examples/staging/kos/pkg/client/listers/network/v1alpha1"
 	netfabric "k8s.io/examples/staging/kos/pkg/networkfabric"
 	"k8s.io/examples/staging/kos/pkg/util/parse"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 const (
@@ -394,10 +395,19 @@ func New(node string,
 			Help:        "Number of queue worker threads",
 			ConstLabels: map[string]string{"node": node},
 		})
-	prometheus.MustRegister(attachmentCreateToLocalIfcHistogram, attachmentCreateToRemoteIfcHistogram, localImplToRemoteIfcHistogram, fabricLatencyHistograms, attachmentCreateToStatusHistogram, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount)
+	versionCount := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   metricsNamespace,
+			Subsystem:   metricsSubsystem,
+			Name:        "version",
+			Help:        "Version indicator",
+			ConstLabels: map[string]string{"git_commit": version.GitCommit},
+		})
+	prometheus.MustRegister(attachmentCreateToLocalIfcHistogram, attachmentCreateToRemoteIfcHistogram, localImplToRemoteIfcHistogram, fabricLatencyHistograms, attachmentCreateToStatusHistogram, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount, versionCount)
 
 	fabricNameCounts.With(prometheus.Labels{"fabric": netFabric.Name()}).Inc()
 	workerCount.Add(float64(workers))
+	versionCount.Add(1)
 
 	eventBroadcaster := k8seventrecord.NewBroadcaster()
 	eventBroadcaster.StartLogging(klog.V(3).Infof)

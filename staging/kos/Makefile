@@ -1,5 +1,7 @@
 DOCKER_PREFIX=${LOGNAME}
+DOCKER_TAG=latest
 KOS_PERSIST=${HOME}/.kos
+gitcommit=$(shell hack/commit-tag.sh)
 
 publish:: publish-network-apiserver
 publish:: publish-connection-agent
@@ -17,35 +19,35 @@ clean:
 	rm -rf "${KOS_PERSIST}/tls"
 
 build-network-apiserver:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/network-apiserver/network-apiserver k8s.io/examples/staging/kos/cmd/network-apiserver
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/network-apiserver/network-apiserver -ldflags '-X k8s.io/examples/staging/kos/pkg/util/version.GitCommit=${gitcommit}' k8s.io/examples/staging/kos/cmd/network-apiserver
 
 build-connection-agent:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/connection-agent/connection-agent k8s.io/examples/staging/kos/cmd/connection-agent
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/connection-agent/connection-agent -ldflags '-X k8s.io/examples/staging/kos/pkg/util/version.GitCommit=${gitcommit}' k8s.io/examples/staging/kos/cmd/connection-agent
 
 build-controller-manager:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/controller-manager/controller-manager k8s.io/examples/staging/kos/cmd/controller-manager
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o images/controller-manager/controller-manager -ldflags '-X k8s.io/examples/staging/kos/pkg/util/version.GitCommit=${gitcommit}' k8s.io/examples/staging/kos/cmd/controller-manager
 
 build-attachment-tput-driver:
-	go build -a -o local-binaries/attachment-tput-driver k8s.io/examples/staging/kos/cmd/attachment-tput-driver
+	go build -a -o local-binaries/attachment-tput-driver -ldflags '-X k8s.io/examples/staging/kos/pkg/util/version.GitCommit=${gitcommit}' k8s.io/examples/staging/kos/cmd/attachment-tput-driver
 
 publish-network-apiserver:
-	cd images/network-apiserver && docker build -t ${DOCKER_PREFIX}/kos-network-apiserver:latest -t ${DOCKER_PREFIX}/kos-network-apiserver:$$(../../hack/commit-tag.sh) . && docker push ${DOCKER_PREFIX}/kos-network-apiserver:latest && docker push ${DOCKER_PREFIX}/kos-network-apiserver:$$(../../hack/commit-tag.sh)
+	cd images/network-apiserver && docker build -t ${DOCKER_PREFIX}/kos-network-apiserver:latest -t ${DOCKER_PREFIX}/kos-network-apiserver:${gitcommit} . && docker push ${DOCKER_PREFIX}/kos-network-apiserver:latest && docker push ${DOCKER_PREFIX}/kos-network-apiserver:${gitcommit}
 
 publish-connection-agent:
 	cp -R cmd/attachment-tput-driver/test-scripts images/connection-agent
-	cd images/connection-agent && docker build -t ${DOCKER_PREFIX}/kos-connection-agent:latest -t ${DOCKER_PREFIX}/kos-connection-agent:$$(../../hack/commit-tag.sh) . && docker push ${DOCKER_PREFIX}/kos-connection-agent:latest && docker push ${DOCKER_PREFIX}/kos-connection-agent:$$(../../hack/commit-tag.sh)
+	cd images/connection-agent && docker build -t ${DOCKER_PREFIX}/kos-connection-agent:latest -t ${DOCKER_PREFIX}/kos-connection-agent:${gitcommit} . && docker push ${DOCKER_PREFIX}/kos-connection-agent:latest && docker push ${DOCKER_PREFIX}/kos-connection-agent:${gitcommit}
 
 publish-controller-manager:
-	cd images/controller-manager && docker build -t ${DOCKER_PREFIX}/kos-controller-manager:latest -t ${DOCKER_PREFIX}/kos-controller-manager:$$(../../hack/commit-tag.sh) . && docker push ${DOCKER_PREFIX}/kos-controller-manager:latest && docker push ${DOCKER_PREFIX}/kos-controller-manager:$$(../../hack/commit-tag.sh)
+	cd images/controller-manager && docker build -t ${DOCKER_PREFIX}/kos-controller-manager:latest -t ${DOCKER_PREFIX}/kos-controller-manager:${gitcommit} . && docker push ${DOCKER_PREFIX}/kos-controller-manager:latest && docker push ${DOCKER_PREFIX}/kos-controller-manager:${gitcommit}
 
 deploy/main/50-d-xs.yaml: deploy.m4/main/50-d-xs.yaml.m4
-	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} deploy.m4/main/50-d-xs.yaml.m4 > deploy/main/50-d-xs.yaml
+	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} -DDOCKER_TAG=${DOCKER_TAG} deploy.m4/main/50-d-xs.yaml.m4 > deploy/main/50-d-xs.yaml
 
 deploy/main/50-ds-ca.yaml: deploy.m4/main/50-ds-ca.yaml.m4
-	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} deploy.m4/main/50-ds-ca.yaml.m4 > deploy/main/50-ds-ca.yaml
+	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} -DDOCKER_TAG=${DOCKER_TAG} deploy.m4/main/50-ds-ca.yaml.m4 > deploy/main/50-ds-ca.yaml
 
 deploy/main/50-d-kcm.yaml: deploy.m4/main/50-d-kcm.yaml.m4
-	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} deploy.m4/main/50-d-kcm.yaml.m4 > deploy/main/50-d-kcm.yaml
+	m4 -DDOCKER_PREFIX=${DOCKER_PREFIX} -DDOCKER_TAG=${DOCKER_TAG} deploy.m4/main/50-d-kcm.yaml.m4 > deploy/main/50-d-kcm.yaml
 
 deploy/main/70-apiservice.yaml: deploy.m4/main/70-apiservice.yaml.m4 ${KOS_PERSIST}/tls/ca.pem.b64
 	m4 -DCA_CRT=$$(cat ${KOS_PERSIST}/tls/ca.pem.b64) \
