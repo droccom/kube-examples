@@ -197,7 +197,7 @@ func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttac
 	return
 }
 
-func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAttachment) (*remoteNetworkInterface, error) {
+func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time) (*remoteNetworkInterface, error) {
 	ifc := &remoteNetworkInterface{}
 	ifc.VNI = att.Status.AddressVNI
 	ifc.GuestIP = gonet.ParseIP(att.Status.IPv4)
@@ -210,8 +210,15 @@ func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAtta
 
 	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "CreateRemoteIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
-		ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec).Time()).Seconds())
-		ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Time()).Seconds())
+		naSpecWriteTime := att.Writes.GetServerWriteTime(netv1a1.NASectionSpec).Time()
+		naImplWriteTime := att.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Time()
+		if vnRelevanceTime.Before(naImplWriteTime) {
+			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(naSpecWriteTime).Seconds())
+			ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(naImplWriteTime).Seconds())
+		} else {
+			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(vnRelevanceTime).Seconds() + naImplWriteTime.Sub(naSpecWriteTime).Seconds())
+			ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(vnRelevanceTime).Seconds())
+		}
 		ca.remoteAttachmentsGauge.Inc()
 	}
 
