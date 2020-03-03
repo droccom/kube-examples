@@ -55,6 +55,7 @@ import (
 	netclientv1a1 "k8s.io/examples/staging/kos/pkg/client/clientset/versioned/typed/network/v1alpha1"
 	kosinformers "k8s.io/examples/staging/kos/pkg/client/informers/externalversions"
 	"k8s.io/examples/staging/kos/pkg/util/convert"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 const (
@@ -689,7 +690,7 @@ func main() {
 		os.Exit(6)
 	}
 
-	glog.Warningf("Driver parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
+	glog.Warningf("Driver GitCommit=%q; parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, omitTest=%v, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", version.GitCommit, *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *omitTest, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
 
 	vni0 := rand.Intn(32)*65536 + 1 // allow 64Ki VNIs in a run without overflowing the 21 bit limit
 	glog.Warningf("First VNI is %06x\n", vni0)

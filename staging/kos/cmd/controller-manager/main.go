@@ -38,6 +38,7 @@ import (
 	kosinformers "k8s.io/examples/staging/kos/pkg/client/informers/externalversions"
 
 	_ "k8s.io/examples/staging/kos/pkg/controllers/workqueue_prometheus"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 const (
@@ -97,7 +98,7 @@ func main() {
 			os.Exit(5)
 		}
 	}
-	klog.Info("All controllers started.")
+	klog.Infof("All controllers started.  GitCommit=%q", version.GitCommit)
 
 	// Serve Prometheus metrics.
 	http.Handle(metricsPath, promhttp.Handler())

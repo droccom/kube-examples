@@ -44,6 +44,7 @@ import (
 	netlistv1a1 "k8s.io/examples/staging/kos/pkg/client/listers/network/v1alpha1"
 	"k8s.io/examples/staging/kos/pkg/util/parse"
 	"k8s.io/examples/staging/kos/pkg/util/parse/network/subnet"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 const (
@@ -88,6 +89,9 @@ var (
 
 	// Number of worker goroutines.
 	workerCount prometheus.Counter
+
+	// Carrier of version information in labels
+	versionCount prometheus.Counter
 )
 
 func init() {
@@ -181,7 +185,16 @@ func setupPrometheusMetrics() {
 			Help:      "Number of queue worker threads",
 		})
 
-	prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount)
+	versionCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   metricsNamespace,
+			Subsystem:   metricsSubsystem,
+			Name:        "version",
+			Help:        "Version indicator",
+			ConstLabels: map[string]string{"git_commit": version.GitCommit},
+		})
+
+	prometheus.MustRegister(subnetCreateToValidatedHistograms, subnetUpdateHistograms, liveListHistograms, liveListResultLengthHistogram, duplicateWorkCount, staleSubnetsSuppressionCount, cacheVsLiveSubnetMismatches, workerCount, versionCount)
 }
 
 // conflictsCache holds information for one subnet regarding conflicts with
@@ -244,6 +257,7 @@ func NewValidationController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	workers int) *Validator {
 
 	workerCount.Add(float64(workers))
+	versionCount.Add(1)
 
 	return &Validator{
 		netIfc:         netIfc,

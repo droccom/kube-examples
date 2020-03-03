@@ -18,7 +18,7 @@ spec:
         role.kos.example.com/control: "true"
       containers:
       - name: apiserver
-        image: DOCKER_PREFIX/kos-network-apiserver:latest
+        image: DOCKER_PREFIX/kos-network-apiserver:DOCKER_TAG
         imagePullPolicy: Always
         volumeMounts:
         - name: network-api-certs

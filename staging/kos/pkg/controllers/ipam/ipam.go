@@ -47,6 +47,7 @@ import (
 	"k8s.io/examples/staging/kos/pkg/util/parse"
 
 	"k8s.io/examples/staging/kos/pkg/uint32set"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 const (
@@ -202,9 +203,19 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Help:      "Number of queue worker threads",
 		})
 
-	prometheus.MustRegister(attachmentCreateToLockHistogram, lockOpHistograms, attachmentCreateToAddressHistogram, attachmentUpdateHistograms, anticipationUsedHistogram, statusUsedHistogram, workerCount)
+	versionCount := prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace:   metricsNamespace,
+			Subsystem:   metricsSubsystem,
+			Name:        "version",
+			Help:        "Version indicator",
+			ConstLabels: map[string]string{"git_commit": version.GitCommit},
+		})
+
+	prometheus.MustRegister(attachmentCreateToLockHistogram, lockOpHistograms, attachmentCreateToAddressHistogram, attachmentUpdateHistograms, anticipationUsedHistogram, statusUsedHistogram, workerCount, versionCount)
 
 	workerCount.Add(float64(workers))
+	versionCount.Add(1)
 
 	eventBroadcaster := k8seventrecord.NewBroadcaster()
 	eventBroadcaster.StartLogging(klog.V(3).Infof)

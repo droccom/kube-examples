@@ -26,6 +26,7 @@ import (
 	"k8s.io/klog"
 
 	"k8s.io/examples/staging/kos/pkg/cmd/server"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 )
 
 func main() {
@@ -41,6 +42,7 @@ func main() {
 	options := server.NewNetworkAPIServerOptions(os.Stdout, os.Stderr)
 	cmd := server.NewCommandStartNetworkAPIServer(options, stopCh)
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
+	klog.Infof("Starting network-apiserver.  GitCommit=%q", version.GitCommit)
 	if err := cmd.Execute(); err != nil {
 		klog.Fatal(err)
 	}

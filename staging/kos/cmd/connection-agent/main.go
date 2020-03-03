@@ -38,6 +38,7 @@ import (
 	"k8s.io/examples/staging/kos/pkg/controllers/connectionagent"
 	_ "k8s.io/examples/staging/kos/pkg/controllers/workqueue_prometheus"
 	netfactory "k8s.io/examples/staging/kos/pkg/networkfabric/factory"
+	"k8s.io/examples/staging/kos/pkg/util/version"
 
 	_ "k8s.io/examples/staging/kos/pkg/networkfabric/logger"
 	_ "k8s.io/examples/staging/kos/pkg/networkfabric/ovs"
@@ -151,7 +152,7 @@ func main() {
 
 	ca := connectionagent.New(nodeName, gonet.ParseIP(hostIP), kcs, eventIfc, queue, workers, netFabric, allowedProgramsSet)
 
-	klog.Infof("Connection Agent start, nodeName=%s, hostIP=%s, netFabric=%s, allowedProgramsSlice=%v, kubeconfig=%q, workers=%d, QPS=%d, burst=%d, blockProfileRate=%d, mutexProfileFraction=%d",
+	klog.Infof("Connection Agent start, nodeName=%s, hostIP=%s, netFabric=%s, allowedProgramsSlice=%v, kubeconfig=%q, workers=%d, QPS=%d, burst=%d, blockProfileRate=%d, mutexProfileFraction=%dk, GitCommit=%q",
 		nodeName,
 		hostIP,
 		netFabric.Name(),
@@ -161,7 +162,8 @@ func main() {
 		clientQPS,
 		clientBurst,
 		blockProfileRate,
-		mutexProfileFraction)
+		mutexProfileFraction,
+		version.GitCommit)
 
 	stopCh := StopOnSignals()
 	err = ca.Run(stopCh)

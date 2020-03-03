@@ -22,7 +22,7 @@ spec:
       dnsPolicy: "ClusterFirstWithHostNet"
       containers:
       - name: connection-agent
-        image: DOCKER_PREFIX/kos-connection-agent:latest
+        image: DOCKER_PREFIX/kos-connection-agent:DOCKER_TAG
         imagePullPolicy: Always
         volumeMounts:
         - name: ovs-socks-dir
