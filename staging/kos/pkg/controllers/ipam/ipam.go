@@ -727,8 +727,10 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 		ctlr.lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 		if err == nil {
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
-			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID))
-			ctlr.attachmentCreateToLockHistogram.Observe(ipl2.CreationTimestamp.Sub(att.CreationTimestamp.Time).Seconds())
+			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
+			if len(att.Status.IPv4) == 0 {
+				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.CreationTimestamp.Sub(att.CreationTimestamp.Time).Seconds())
+			}
 			break
 		} else if k8serrors.IsAlreadyExists(err) {
 			// Maybe it is ours
