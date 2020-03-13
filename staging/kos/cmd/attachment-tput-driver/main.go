@@ -626,6 +626,7 @@ func waitForInitializedSubnets() {
 	return
 }
 
+var printGitCommit = flag.Bool("git-commit", false, "print git commit and quit")
 var addr0S = flag.String("base-address", "172.24.0.0", "Start of IP address range to use")
 var numNets = flag.Int("num-nets", 10, "Number of virtual networks to use")
 var topNetSize = flag.Int("top-net-size", 100, "Largest number of slots in a virtual network")
@@ -663,6 +664,11 @@ func main() {
 
 	flag.Set("stderrthreshold", "WARNING")
 	flag.Parse()
+
+	if *printGitCommit {
+		fmt.Println(version.GitCommit)
+		return
+	}
 
 	if *runID == "" {
 		now := time.Now()
