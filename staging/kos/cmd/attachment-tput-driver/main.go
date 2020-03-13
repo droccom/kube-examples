@@ -103,16 +103,16 @@ var (
 	failedDeletes              prometheus.Counter
 )
 
-// The following vars are used by threads to compute the time at which the next
-// op should take place.
+// The following vars are used by threads to determine the time at which the
+// next op should take place.
+// When the number of attachments is not a multiple of the number of threads
+// some threads create and delete one more attachment than others and thus need
+// to advance through the last part of the schedule with a shorter stride.
+// `regularStrides` is the number of regular strides taken through the schedule,
+// and `shortStride` is the shorter stride that some threads use at the end.
 var (
-	// Each thread must perform at least `opsPerThdMin` ops on attachments
-	// (but some threads will perform more).
-	opsPerThdMin uint64
-	// `attsLeft` is the number of attachments that would be "in excess" if we
-	// wanted all threads to manage (create and delete) the same number of
-	// attachments.
-	attsLeft uint64
+	regularStrides uint64
+	shortStride    uint64
 )
 
 var (
@@ -1065,8 +1065,8 @@ func main() {
 			os.Exit(8)
 		}
 	}
-	opsPerThdMin = 2 * (uint64(*numAttachments) / *threads)
-	attsLeft = uint64(*numAttachments) % *threads
+	regularStrides = 2 * (uint64(*numAttachments) / *threads)
+	shortStride = uint64(*numAttachments) % *threads
 	t0 := time.Now()
 	for i := uint64(0); i < *threads; i++ {
 		wg.Add(1)
@@ -1152,10 +1152,10 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 		hadToWait := false
 		for {
 			var nextOpIdx uint64
-			if iCreate+iDelete < opsPerThdMin {
+			if iCreate+iDelete < regularStrides {
 				nextOpIdx = (iCreate+iDelete)*numThreads + thd - 1
 			} else {
-				nextOpIdx = opsPerThdMin*numThreads + ((iCreate+iDelete)-opsPerThdMin)*attsLeft + thd - 1
+				nextOpIdx = regularStrides*numThreads + ((iCreate+iDelete)-regularStrides)*shortStride + thd - 1
 			}
 			dt := opsTimes[nextOpIdx]
 			xd := atomic.AddInt64(&xtraDelayI, 0)
