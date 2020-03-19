@@ -419,21 +419,22 @@ func (ctlr *IPAMController) processQueue() {
 		if stop {
 			return
 		}
+		qlen := ctlr.queue.Len()
 		nsn := item.(k8stypes.NamespacedName)
-		ctlr.processQueueItem(nsn)
+		ctlr.processQueueItem(nsn, qlen)
 	}
 }
 
-func (ctlr *IPAMController) processQueueItem(nsn k8stypes.NamespacedName) {
+func (ctlr *IPAMController) processQueueItem(nsn k8stypes.NamespacedName, qlen int) {
 	defer ctlr.queue.Done(nsn)
 	err := ctlr.processNetworkAttachment(nsn.Namespace, nsn.Name)
 	requeues := ctlr.queue.NumRequeues(nsn)
 	if err == nil {
-		klog.V(4).Infof("Finished %s with %d requeues", nsn, requeues)
+		klog.V(4).Infof("Finished %s with %d requeues, queue length was %d", nsn, requeues, qlen)
 		ctlr.queue.Forget(nsn)
 		return
 	}
-	klog.Warningf("Failed processing %s, requeuing (%d earlier requeues): %s", nsn, requeues, err.Error())
+	klog.Warningf("Failed processing %s, requeuing (%d earlier requeues, %d were in queue): %s", nsn, requeues, qlen, err.Error())
 	ctlr.queue.AddRateLimited(nsn)
 }
 
