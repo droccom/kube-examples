@@ -664,16 +664,17 @@ func (ca *ConnectionAgent) processQueue() {
 		if stop {
 			return
 		}
+		qlen := ca.queue.Len()
 		attNSN := item.(k8stypes.NamespacedName)
-		ca.processQueueItem(attNSN)
+		ca.processQueueItem(attNSN, qlen)
 	}
 }
 
-func (ca *ConnectionAgent) processQueueItem(attNSN k8stypes.NamespacedName) {
+func (ca *ConnectionAgent) processQueueItem(attNSN k8stypes.NamespacedName, qlen int) {
 	defer ca.queue.Done(attNSN)
 
 	requeues := ca.queue.NumRequeues(attNSN)
-	klog.V(5).Infof("Working on attachment %s, with %d earlier requeues", attNSN, requeues)
+	klog.V(5).Infof("Working on attachment %s, with %d earlier requeues and queue length %d", attNSN, requeues, qlen)
 
 	err := ca.processNetworkAttachment(attNSN)
 	if err != nil {
