@@ -13,17 +13,19 @@ peer_name=$6
 
 {
 	ip link show $ifc_name || exit 2
-	echo ===Add===
+	echo ===NetNS===
 	ip netns add $netns_name
+	sleep 1
 	echo ===Move===
 	ip link set $ifc_name netns $netns_name
+	sleep 1
 	echo ===Config===
 	ip netns exec $netns_name ip link set $ifc_name up
 	ip netns exec $netns_name ip addr add $ifc_ip dev $ifc_name
 	ip netns exec $netns_name ip route add default dev $ifc_name
-	echo ===Addr===
+	echo ===Addrs===
 	ip netns exec $netns_name ip addr
-	echo ===Route===
+	echo ===Routes===
 	ip netns exec $netns_name ip route
 	if [ -n "$peer_ip" ]; then
 		for (( i=0; i < $count; i++ )) ; do
