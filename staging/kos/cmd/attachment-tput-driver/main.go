@@ -406,8 +406,11 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			slot.testedTime = now
 			cr := natt.Status.PostCreateExecReport
 			slot.testES = cr.ExitStatus
-			if cr.ExitStatus != 0 {
-				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
+			if strings.Contains(cr.StdOut, "Invalid") || strings.Contains(cr.StdErr, "Invalid") {
+				slot.testES = slot.testES + 64
+			}
+			if slot.testES != 0 {
+				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.testES, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
 			}
 			if slot.testES == 0 {
 				cd.NoteTested(slotIndex)
