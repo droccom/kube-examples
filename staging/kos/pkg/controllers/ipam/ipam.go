@@ -136,7 +136,7 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Subsystem: metricsSubsystem,
 			Name:      "attachment_create_to_lock_latency_seconds",
 			Help:      "Latency from Attachment CreationTimestamp to IPLock CreationTimestamp, in seconds",
-			Buckets:   []float64{-1, 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
+			Buckets:   []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
 		})
 
 	lockOpHistograms := prometheus.NewHistogramVec(
