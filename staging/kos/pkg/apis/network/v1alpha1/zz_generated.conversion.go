@@ -250,6 +250,9 @@ func Convert_network_ExtendedObjectMeta_To_v1alpha1_ExtendedObjectMeta(in *netwo
 
 func autoConvert_v1alpha1_IPLock_To_network_IPLock(in *IPLock, out *network.IPLock, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_v1alpha1_ExtendedObjectMeta_To_network_ExtendedObjectMeta(&in.ExtendedObjectMeta, &out.ExtendedObjectMeta, s); err != nil {
+		return err
+	}
 	if err := Convert_v1alpha1_IPLockSpec_To_network_IPLockSpec(&in.Spec, &out.Spec, s); err != nil {
 		return err
 	}
@@ -263,6 +266,9 @@ func Convert_v1alpha1_IPLock_To_network_IPLock(in *IPLock, out *network.IPLock, 
 
 func autoConvert_network_IPLock_To_v1alpha1_IPLock(in *network.IPLock, out *IPLock, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
+	if err := Convert_network_ExtendedObjectMeta_To_v1alpha1_ExtendedObjectMeta(&in.ExtendedObjectMeta, &out.ExtendedObjectMeta, s); err != nil {
+		return err
+	}
 	if err := Convert_network_IPLockSpec_To_v1alpha1_IPLockSpec(&in.Spec, &out.Spec, s); err != nil {
 		return err
 	}

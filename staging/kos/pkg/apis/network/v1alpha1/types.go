@@ -491,6 +491,9 @@ type IPLockSpec struct {
 	SubnetName string `json:"subnetName" protobuf:"bytes,1,name=subnetName"`
 }
 
+// The only ExtendedObjectMeta section for an IPLock.
+const IPLockSectionWholeObj = "whole_object"
+
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -500,7 +503,11 @@ type IPLock struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
-	Spec IPLockSpec `json:"spec" protobuf:"bytes,2,name=spec"`
+	// `extendedMetadata` adds non-standard object metadata.
+	// +optional
+	ExtendedObjectMeta `json:"extendedMetadata,omitempty" protobuf:"bytes,2,opt,name=extendedMetadata"`
+
+	Spec IPLockSpec `json:"spec" protobuf:"bytes,3,name=spec"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

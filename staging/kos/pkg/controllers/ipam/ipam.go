@@ -730,7 +730,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
 			if len(att.Status.IPv4) == 0 {
-				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.CreationTimestamp.Sub(att.CreationTimestamp.Time).Seconds())
+				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionWholeObj).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
 			}
 			break
 		} else if k8serrors.IsAlreadyExists(err) {

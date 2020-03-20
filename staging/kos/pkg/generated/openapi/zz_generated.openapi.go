@@ -2522,6 +2522,12 @@ func schema_pkg_apis_network_v1alpha1_IPLock(ref common.ReferenceCallback) commo
 							Ref: ref("k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"),
 						},
 					},
+					"extendedMetadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "`extendedMetadata` adds non-standard object metadata.",
+							Ref:         ref("k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.ExtendedObjectMeta"),
+						},
+					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Ref: ref("k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.IPLockSpec"),
@@ -2532,7 +2538,7 @@ func schema_pkg_apis_network_v1alpha1_IPLock(ref common.ReferenceCallback) commo
 			},
 		},
 		Dependencies: []string{
-			"k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.IPLockSpec"},
+			"k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.ExtendedObjectMeta", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.IPLockSpec"},
 	}
 }
 
