@@ -364,20 +364,20 @@ func New(node string,
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
 			Name:        "attachment_exec_duration_secs",
-			Help:        "Time to run attachment commands, in seconds",
+			Help:        "Seconds to run attachment commands, by what, exit status, and complaints",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
 		},
-		[]string{"what"})
+		[]string{"what", "exitStatus", "complaints"})
 	attachmentExecStatusCounts := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
 			Name:        "attachment_exec_status_count",
-			Help:        "Counts of commands by what and exit status",
+			Help:        "Counts of commands by what, exit status, and complaints",
 			ConstLabels: map[string]string{"node": node},
 		},
-		[]string{"what", "exitStatus"})
+		[]string{"what", "exitStatus", "complaints"})
 	fabricNameCounts := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace:   metricsNamespace,
