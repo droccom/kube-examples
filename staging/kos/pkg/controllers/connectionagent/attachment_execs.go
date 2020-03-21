@@ -18,6 +18,7 @@ package connectionagent
 
 import (
 	"fmt"
+	"math/bits"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -86,6 +87,11 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 		StdOut:    stdout.String(),
 		StdErr:    stderr.String(),
 	}
+	var complaints uint
+	if len(cr.StdErr) > 0 {
+		complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
+	}
+	complaints += uint(strings.Count(cr.StdOut, "Invalid"))
 	if err == nil {
 		cr.ExitStatus = 0
 	} else {
@@ -104,8 +110,10 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 			cr.ExitStatus = failErrNotExit
 		}
 	}
-	c.attachmentExecDurationHistograms.With(prometheus.Labels{"what": what}).Observe(stopTime.Sub(startTime).Seconds())
-	c.attachmentExecStatusCounts.With(prometheus.Labels{"what": what, "exitStatus": strconv.FormatInt(int64(cr.ExitStatus), 10)}).Inc()
+	exitStatusStr := strconv.FormatInt(int64(cr.ExitStatus), 10)
+	lgComplaintsStr := strconv.FormatInt(int64(bits.Len(complaints)-1), 10)
+	c.attachmentExecDurationHistograms.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Observe(stopTime.Sub(startTime).Seconds())
+	c.attachmentExecStatusCounts.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Inc()
 	klog.V(4).Infof("Exec report: att=%s, vni=%06x, ipv4=%s, ifcName=%s, mac=%s, what=%s, report=%#+v", attNSN, ifc.VNI, ifc.GuestIP, ifc.Name, ifc.GuestMAC, what, cr)
 	if setExecReport != nil {
 		setExecReport(cr)

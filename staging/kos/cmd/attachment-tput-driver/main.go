@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/bits"
 	"math/rand"
 	"net"
 	"net/http"
@@ -75,8 +76,9 @@ const (
 	HistogramNamespace = "kos"
 	HistogramSubsystem = "driver"
 
-	esLabel   = "ES"
-	fullLabel = "full"
+	esLabel           = "ES"
+	lgComplaintsLabel = "lgComplaints"
+	fullLabel         = "full"
 
 	// The name of the annotation holding the client-side creation timestamp.
 	createTimestampAnnotationKey = "precise/createTimestamp"
@@ -96,7 +98,7 @@ var (
 	createToTestedHistogram    TrackingHistogram
 	readyToTestedHistogram     TrackingHistogram
 	deleteLatencyHistogram     TrackingHistogram
-	testESs                    *prometheus.CounterVec
+	testCounts                 *prometheus.CounterVec
 	successfulCreates          prometheus.Counter
 	failedCreates              prometheus.Counter
 	successfulDeletes          prometheus.Counter
@@ -319,6 +321,7 @@ type Slot struct {
 	readyTime             time.Time
 	fullTest              bool
 	testES                int32
+	testLgComplaints      int
 	testedTime            time.Time
 	brokenTime            time.Time
 	natt                  *netv1a1.NetworkAttachment
@@ -406,8 +409,14 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			slot.testedTime = now
 			cr := natt.Status.PostCreateExecReport
 			slot.testES = cr.ExitStatus
+			var complaints uint
+			if len(cr.StdErr) > 0 {
+				complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
+			}
+			complaints += uint(strings.Count(cr.StdOut, "Invalid"))
+			slot.testLgComplaints = bits.Len(complaints) - 1
 			if cr.ExitStatus != 0 {
-				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
+				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complaints=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complaints, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
 			}
 			if slot.testES == 0 {
 				cd.NoteTested(slotIndex)
@@ -417,7 +426,7 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 					atomic.AddUint32(&stoppers, 1)
 				}
 			}
-			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, natt.Status.IPv4)
+			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, complaints=%d, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, complaints, natt.Status.IPv4)
 		}
 	} else if hasBrokenIPAM(natt.Status.Errors.IPAM) || len(natt.Status.Errors.Host) > 0 {
 		if slot.brokenTime == (time.Time{}) {
@@ -536,7 +545,7 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 	if slot.testedTime != (time.Time{}) {
 		createToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
 		readyToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.readyTime).Seconds(), nsName, slot.natt.Name)
-		testESs.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), fullLabel: strconv.FormatBool(slot.fullTest)}).Add(1)
+		testCounts.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), lgComplaintsLabel: strconv.FormatInt(int64(slot.testLgComplaints), 10), fullLabel: strconv.FormatBool(slot.fullTest)}).Inc()
 	}
 	if slot.addressedTime == (time.Time{}) {
 		glog.Infof("Attachment got no address: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)
@@ -941,15 +950,15 @@ func main() {
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 8, 16, 32},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
-	testESs = prometheus.NewCounterVec(
+	testCounts = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace:   HistogramNamespace,
 			Subsystem:   HistogramSubsystem,
 			Name:        "test_count",
-			Help:        "Count of tests, by exit status",
+			Help:        "Count of tests, by exit status, floor(log_base_2(complaints)), and full",
 			ConstLabels: map[string]string{"runID": *runID},
 		},
-		[]string{esLabel, fullLabel})
+		[]string{esLabel, lgComplaintsLabel, fullLabel})
 	successfulCreates = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   HistogramNamespace,
@@ -986,7 +995,7 @@ func main() {
 	prometheus.MustRegister(createLatencyHistogram, deleteLatencyHistogram,
 		createToAddressedHistogram, createToReadyHistogram,
 		createToBrokenHistogram,
-		createToTestedHistogram, readyToTestedHistogram, testESs,
+		createToTestedHistogram, readyToTestedHistogram, testCounts,
 		successfulCreates, failedCreates, successfulDeletes, failedDeletes)
 
 	if *threads > uint64(nneI) {
