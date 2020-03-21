@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/bits"
 	"math/rand"
 	"net"
 	"net/http"
@@ -75,9 +76,9 @@ const (
 	HistogramNamespace = "kos"
 	HistogramSubsystem = "driver"
 
-	esLabel       = "ES"
-	complainLabel = "complain"
-	fullLabel     = "full"
+	esLabel           = "ES"
+	lgComplaintsLabel = "lgComplaints"
+	fullLabel         = "full"
 
 	// The name of the annotation holding the client-side creation timestamp.
 	createTimestampAnnotationKey = "precise/createTimestamp"
@@ -320,7 +321,7 @@ type Slot struct {
 	readyTime             time.Time
 	fullTest              bool
 	testES                int32
-	testComplain          string
+	testLgComplaints      int
 	testedTime            time.Time
 	brokenTime            time.Time
 	natt                  *netv1a1.NetworkAttachment
@@ -408,13 +409,14 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			slot.testedTime = now
 			cr := natt.Status.PostCreateExecReport
 			slot.testES = cr.ExitStatus
-			complain := "0"
-			if len(cr.StdErr) > 0 || strings.Contains(cr.StdOut, "Invalid") {
-				complain = "1"
+			var complaints uint
+			if len(cr.StdErr) > 0 {
+				complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
 			}
-			slot.testComplain = complain
+			complaints += uint(strings.Count(cr.StdOut, "Invalid"))
+			slot.testLgComplaints = bits.Len(complaints) - 1
 			if cr.ExitStatus != 0 {
-				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complain=%s, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complain, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
+				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complaints=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complaints, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
 			}
 			if slot.testES == 0 {
 				cd.NoteTested(slotIndex)
@@ -424,7 +426,7 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 					atomic.AddUint32(&stoppers, 1)
 				}
 			}
-			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, complain=%s, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, slot.testComplain, natt.Status.IPv4)
+			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, complaints=%d, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, complaints, natt.Status.IPv4)
 		}
 	} else if hasBrokenIPAM(natt.Status.Errors.IPAM) || len(natt.Status.Errors.Host) > 0 {
 		if slot.brokenTime == (time.Time{}) {
@@ -543,7 +545,7 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 	if slot.testedTime != (time.Time{}) {
 		createToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
 		readyToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.readyTime).Seconds(), nsName, slot.natt.Name)
-		testCounts.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), complainLabel: slot.testComplain, fullLabel: strconv.FormatBool(slot.fullTest)}).Inc()
+		testCounts.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), lgComplaintsLabel: strconv.FormatInt(int64(slot.testLgComplaints), 10), fullLabel: strconv.FormatBool(slot.fullTest)}).Inc()
 	}
 	if slot.addressedTime == (time.Time{}) {
 		glog.Infof("Attachment got no address: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)
@@ -953,10 +955,10 @@ func main() {
 			Namespace:   HistogramNamespace,
 			Subsystem:   HistogramSubsystem,
 			Name:        "test_count",
-			Help:        "Count of tests, by exit status, complain, and full",
+			Help:        "Count of tests, by exit status, floor(log_base_2(complaints)), and full",
 			ConstLabels: map[string]string{"runID": *runID},
 		},
-		[]string{esLabel, complainLabel, fullLabel})
+		[]string{esLabel, lgComplaintsLabel, fullLabel})
 	successfulCreates = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace:   HistogramNamespace,

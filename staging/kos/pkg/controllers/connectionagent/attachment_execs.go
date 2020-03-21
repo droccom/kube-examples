@@ -87,15 +87,11 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 		StdOut:    stdout.String(),
 		StdErr:    stderr.String(),
 	}
-	complaints := uint(0)
+	var complaints uint
 	if len(cr.StdErr) > 0 {
 		complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
 	}
 	complaints += uint(strings.Count(cr.StdOut, "Invalid"))
-	if complaints > 0 {
-		complaints = 1 << (bits.Len(complaints) - 1)
-	}
-	complaintsStr := strconv.FormatInt(int64(complaints), 10)
 	if err == nil {
 		cr.ExitStatus = 0
 	} else {
@@ -115,8 +111,9 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 		}
 	}
 	exitStatusStr := strconv.FormatInt(int64(cr.ExitStatus), 10)
-	c.attachmentExecDurationHistograms.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "complaints": complaintsStr}).Observe(stopTime.Sub(startTime).Seconds())
-	c.attachmentExecStatusCounts.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "complaints": complaintsStr}).Inc()
+	lgComplaintsStr := strconv.FormatInt(int64(bits.Len(complaints)-1), 10)
+	c.attachmentExecDurationHistograms.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Observe(stopTime.Sub(startTime).Seconds())
+	c.attachmentExecStatusCounts.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Inc()
 	klog.V(4).Infof("Exec report: att=%s, vni=%06x, ipv4=%s, ifcName=%s, mac=%s, what=%s, report=%#+v", attNSN, ifc.VNI, ifc.GuestIP, ifc.Name, ifc.GuestMAC, what, cr)
 	if setExecReport != nil {
 		setExecReport(cr)
