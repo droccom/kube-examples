@@ -73,6 +73,7 @@ func (in *IPLock) DeepCopyInto(out *IPLock) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.ExtendedObjectMeta.DeepCopyInto(&out.ExtendedObjectMeta)
 	out.Spec = in.Spec
 	return
 }

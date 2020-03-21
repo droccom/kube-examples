@@ -136,7 +136,7 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Subsystem: metricsSubsystem,
 			Name:      "attachment_create_to_lock_latency_seconds",
 			Help:      "Latency from Attachment CreationTimestamp to IPLock CreationTimestamp, in seconds",
-			Buckets:   []float64{-1, 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
+			Buckets:   []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
 		})
 
 	lockOpHistograms := prometheus.NewHistogramVec(
@@ -730,7 +730,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
 			if len(att.Status.IPv4) == 0 {
-				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.CreationTimestamp.Sub(att.CreationTimestamp.Time).Seconds())
+				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionWholeObj).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
 			}
 			break
 		} else if k8serrors.IsAlreadyExists(err) {
