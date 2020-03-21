@@ -491,8 +491,10 @@ type IPLockSpec struct {
 	SubnetName string `json:"subnetName" protobuf:"bytes,1,name=subnetName"`
 }
 
-// The only ExtendedObjectMeta section for an IPLock.
-const IPLockSectionWholeObj = "whole_object"
+// The ExtendedObjectMeta sections for an IPLock.
+const (
+	IPLockSectionSpec = "spec"
+)
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

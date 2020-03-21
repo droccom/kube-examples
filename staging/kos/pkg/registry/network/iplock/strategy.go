@@ -79,7 +79,7 @@ func (iplockStrategy) NamespaceScoped() bool {
 func (iplockStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 	ipLock := obj.(*network.IPLock)
 	ipLock.ExtendedObjectMeta = network.ExtendedObjectMeta{}
-	ipLock.Writes = ipLock.Writes.SetWrite(network.IPLockSectionWholeObj, network.Now())
+	ipLock.Writes = ipLock.Writes.SetWrite(network.IPLockSectionSpec, network.Now())
 }
 
 func (iplockStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
