@@ -87,11 +87,7 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 		StdOut:    stdout.String(),
 		StdErr:    stderr.String(),
 	}
-	var complaints uint
-	if len(cr.StdErr) > 0 {
-		complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
-	}
-	complaints += uint(strings.Count(cr.StdOut, "Invalid"))
+	complaints := uint(strings.Count(cr.StdOut, "Invalid")) + uint(strings.Count(cr.StdErr, "Invalid"))
 	if err == nil {
 		cr.ExitStatus = 0
 	} else {
