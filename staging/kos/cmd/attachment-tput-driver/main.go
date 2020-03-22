@@ -409,11 +409,7 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			slot.testedTime = now
 			cr := natt.Status.PostCreateExecReport
 			slot.testES = cr.ExitStatus
-			var complaints uint
-			if len(cr.StdErr) > 0 {
-				complaints = uint(strings.Count(strings.TrimSuffix(cr.StdErr, "\n"), "\n")) + 1
-			}
-			complaints += uint(strings.Count(cr.StdOut, "Invalid"))
+			complaints := uint(strings.Count(cr.StdOut, "Invalid")) + uint(strings.Count(cr.StdErr, "Invalid"))
 			slot.testLgComplaints = bits.Len(complaints) - 1
 			if cr.ExitStatus != 0 {
 				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complaints=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complaints, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
