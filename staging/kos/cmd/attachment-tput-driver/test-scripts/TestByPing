@@ -14,10 +14,8 @@ peer_name=$6
 ip link show $ifc_name || exit 2
 echo "===$(date +%M:%S): NetNS===" >&2
 ip netns add $netns_name
-sleep 1
 echo "===$(date +%M:%S): Move===" >&2
 ip link set $ifc_name netns $netns_name
-sleep 1
 echo "===$(date +%M:%S): Config===" >&2
 ip netns exec $netns_name ip link set $ifc_name up
 ip netns exec $netns_name ip addr add $ifc_ip dev $ifc_name
