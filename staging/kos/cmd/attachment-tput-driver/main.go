@@ -91,18 +91,20 @@ const (
 )
 
 var (
-	createLatencyHistogram     TrackingHistogram
-	createToAddressedHistogram TrackingHistogram
-	createToReadyHistogram     TrackingHistogram
-	createToBrokenHistogram    TrackingHistogram
-	createToTestedHistogram    TrackingHistogram
-	readyToTestedHistogram     TrackingHistogram
-	deleteLatencyHistogram     TrackingHistogram
-	testCounts                 *prometheus.CounterVec
-	successfulCreates          prometheus.Counter
-	failedCreates              prometheus.Counter
-	successfulDeletes          prometheus.Counter
-	failedDeletes              prometheus.Counter
+	createLatencyHistogram      TrackingHistogram
+	createToAddressedHistogram  TrackingHistogram
+	createToReadyHistogram      TrackingHistogram
+	createToBrokenHistogram     TrackingHistogram
+	createToHalfTestedHistogram TrackingHistogram
+	readyToHalfTestedHistogram  TrackingHistogram
+	createToTestedHistogram     TrackingHistogram
+	readyToTestedHistogram      TrackingHistogram
+	deleteLatencyHistogram      TrackingHistogram
+	testCounts                  *prometheus.CounterVec
+	successfulCreates           prometheus.Counter
+	failedCreates               prometheus.Counter
+	successfulDeletes           prometheus.Counter
+	failedDeletes               prometheus.Counter
 )
 
 // The following vars are used by threads to determine the time at which the
@@ -539,8 +541,14 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 		createToBrokenHistogram.ObserveAt(slot.brokenTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
 	}
 	if slot.testedTime != (time.Time{}) {
-		createToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
-		readyToTestedHistogram.ObserveAt(slot.testedTime.Sub(slot.readyTime).Seconds(), nsName, slot.natt.Name)
+		c2t := createToHalfTestedHistogram
+		r2t := readyToHalfTestedHistogram
+		if slot.fullTest {
+			c2t = createToTestedHistogram
+			r2t = readyToTestedHistogram
+		}
+		c2t.ObserveAt(slot.testedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
+		r2t.ObserveAt(slot.testedTime.Sub(slot.readyTime).Seconds(), nsName, slot.natt.Name)
 		testCounts.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), lgComplaintsLabel: strconv.FormatInt(int64(slot.testLgComplaints), 10), fullLabel: strconv.FormatBool(slot.fullTest)}).Inc()
 	}
 	if slot.addressedTime == (time.Time{}) {
@@ -641,6 +649,7 @@ var justCount = flag.Bool("estimate", false, "only characterize the network size
 var roundRobin = flag.Bool("round-robin", false, "pick Nodes round-robin")
 var singleNetwork = flag.Bool("single-network", false, "indicates whether to make only one Subnet in each VirtNet")
 var omitTest = flag.Bool("omit-test", false, "indicates whether to avoid functional testing of the created attachments")
+var testFraction = flag.Float64("test-fraction", 0.1, "fraction of non-initial attachments that are tested")
 var pendingWait = flag.Duration("pending-wait", time.Minute, "max time a thread will wait for a pending attachment to become ready")
 var pingCount = flag.Int("ping-count", 10, "number of ping requests in a full test")
 var stopOnPingFail = flag.Bool("stop-on-ping-fail", true, "stop driving as soon as one ping test fails")
@@ -706,7 +715,11 @@ func main() {
 		os.Exit(6)
 	}
 
-	glog.Warningf("Driver GitCommit=%q; parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, omitTest=%v, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", version.GitCommit, *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *omitTest, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
+	if *omitTest {
+		*testFraction = 0
+	}
+
+	glog.Warningf("Driver GitCommit=%q; parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, testFraction=%v, pingCount=%v, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", version.GitCommit, *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *testFraction, *pingCount, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
 
 	vni0 := rand.Intn(32)*65536 + 1 // allow 64Ki VNIs in a run without overflowing the 21 bit limit
 	glog.Warningf("First VNI is %06x\n", vni0)
@@ -919,12 +932,30 @@ func main() {
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
+	createToHalfTestedHistogram = NewTrackingHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   HistogramNamespace,
+			Subsystem:   HistogramSubsystem,
+			Name:        "attachment_create_to_half_tested_latency_seconds",
+			Help:        "Latency from start of create call to completion of half test",
+			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512},
+			ConstLabels: map[string]string{"runID": *runID},
+		})
+	readyToHalfTestedHistogram = NewTrackingHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   HistogramNamespace,
+			Subsystem:   HistogramSubsystem,
+			Name:        "attachment_ready_to_half_tested_latency_seconds",
+			Help:        "Latency from readiness to completion of half test",
+			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 128, 256},
+			ConstLabels: map[string]string{"runID": *runID},
+		})
 	createToTestedHistogram = NewTrackingHistogram(
 		prometheus.HistogramOpts{
 			Namespace:   HistogramNamespace,
 			Subsystem:   HistogramSubsystem,
 			Name:        "attachment_create_to_tested_latency_seconds",
-			Help:        "Latency from start of create call to completion of test",
+			Help:        "Latency from start of create call to completion of full test",
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
@@ -933,7 +964,7 @@ func main() {
 			Namespace:   HistogramNamespace,
 			Subsystem:   HistogramSubsystem,
 			Name:        "attachment_ready_to_tested_latency_seconds",
-			Help:        "Latency from readiness to completion of test",
+			Help:        "Latency from readiness to completion of full test",
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 128, 256},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
@@ -991,6 +1022,7 @@ func main() {
 	prometheus.MustRegister(createLatencyHistogram, deleteLatencyHistogram,
 		createToAddressedHistogram, createToReadyHistogram,
 		createToBrokenHistogram,
+		createToHalfTestedHistogram, readyToHalfTestedHistogram,
 		createToTestedHistogram, readyToTestedHistogram, testCounts,
 		successfulCreates, failedCreates, successfulDeletes, failedDeletes)
 
@@ -1103,6 +1135,8 @@ func main() {
 	createToAddressedHistogram.DumpToLog()
 	createToReadyHistogram.DumpToLog()
 	createToBrokenHistogram.DumpToLog()
+	createToHalfTestedHistogram.DumpToLog()
+	readyToHalfTestedHistogram.DumpToLog()
 	createToTestedHistogram.DumpToLog()
 	readyToTestedHistogram.DumpToLog()
 	deleteLatencyHistogram.DumpToLog()
@@ -1212,11 +1246,13 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 			var postCreateExec, postDeleteExec []string
 			cd := virtNet.theCD
 			fullTest := false
-			if !*omitTest {
+			if *testFraction > 0 {
 				peer, delay, totalDelay := cd.GetReadyAttachment(virtNet)
 				nnsi := atomic.AddUint32(&nnsCount, 1)
-				if fullTest = peer != nil; fullTest {
-					postCreateExec = strings.Split(fmt.Sprintf("/usr/local/kos/bin/TestByPing ${ifname} %s-%d ${ipv4}/%d %s %d %s", runID, nnsi, virtNet.prefixLen, peer.Status.IPv4, *pingCount, peer.Name), " ")
+				if peer != nil {
+					if fullTest = float64(rand.Float32()) < *testFraction; fullTest {
+						postCreateExec = strings.Split(fmt.Sprintf("/usr/local/kos/bin/TestByPing ${ifname} %s-%d ${ipv4}/%d %s %d %s", runID, nnsi, virtNet.prefixLen, peer.Status.IPv4, *pingCount, peer.Name), " ")
+					}
 				} else {
 					postCreateExec = strings.Split(fmt.Sprintf("/usr/local/kos/bin/TestByPing ${ifname} %s-%d ${ipv4}/%d", runID, nnsi, virtNet.prefixLen), " ")
 				}
