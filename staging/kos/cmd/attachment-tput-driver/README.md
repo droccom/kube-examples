@@ -72,16 +72,17 @@ to stdout and those files.
 
 ## Timing and threading
 
-The driver defines flags that let users customize the timing with which
-requests to create and delete NetworkAttachments are issued.  Currently
-operations on NetworkAttachments can either happen with a constant period
-or according to an approximated Poisson process; in both cases a driver
-parameter lets users specify the average rate of operations.  The Poisson
-process is approximated because the interval between two successive arrivals
-is given by an exponential distribution truncated to `1000/lambda secs`
-instead of a real exponential distribution.  Once a NetworkAttachment
-becomes "ready" it is normally tested with ping, but this can optionally
-be disabled.
+The driver defines flags that let users customize the timing with
+which requests to create and delete NetworkAttachments are issued.
+Currently operations on NetworkAttachments can either happen with a
+constant period or according to an approximated Poisson process; in
+both cases a driver parameter lets users specify the average rate of
+operations.  The Poisson process is approximated because the interval
+between two successive arrivals is given by an exponential
+distribution truncated to `1000/lambda secs` instead of a real
+exponential distribution.  Once a NetworkAttachment becomes "ready" it
+may be tested with ping or configured to be the serving side for that,
+with a configurable probability.
 
 This driver issues NetworkAttachment creation and deletion requests
 from a given number of threads.  The intended schedule of operations
@@ -124,15 +125,18 @@ of time.  The delay limit is normally one minute but can be set by the
 
 ## Ping Testing
 
-The driver normally exercises each NetworkAttachment once it becomes
-ready, with `ping` operations.  This can be disabled with the
-`--omit-test` command line flag.
+The driver normally exercises a configurable fraction of
+NetworkAttachments once they becomes ready, with `ping` operations.
+The fraction is affected through the `--test-fraction` command line
+flag.
+
 
 The pings are done as follows. Each NetworkAttachment is directly
-subjected to one test, which may indirectly test another attachment.
-For a NetworkAttachment E that is created at a time when no existing
-attachment in the same virtual network has successfully completed its
-test, the test for E does the following:
+subjected to zero or one test, which may indirectly test another
+attachment.  For a NetworkAttachment E that is created at a time when
+no existing attachment in the same virtual network has successfully
+completed its test and the test-fraction is greater than zero then E
+is certainly given a "half test", which does the following:
 
 - create a dedicated Linux network namespace on the attachment's host,
 
@@ -145,13 +149,14 @@ test, the test for E does the following:
   network namespace.
 
 For an attachment that is created at a time when some existing
-attachment of the virtual network has completed its test, the same
-steps are done and then a series of `ping` operations is attempted.
-The target IP of the pings is the IP address of the attachment in the
-virtual network that most recently completed its test successfully.  A
-number of `ping -c 1` are attempted, until one succeeds, up to a limit
-which is normally 5 but can be overridden with the `--ping-count`
-command line flag.
+attachment of the virtual network has completed its test, then with
+the test fraction probability the attachment is given a "full test".
+This starts with a half test and then a series of `ping` operations is
+attempted.  The target IP of the pings is the IP address of the
+attachment in the virtual network that most recently completed its
+test successfully.  A number of `ping -c 1` are attempted, until one
+succeeds, up to a limit which is normally 10 but can be overridden
+with the `--ping-count` command line flag.
 
 The driver requests a distinct network namespace for each attachment,
 and for a given attachment requests that the network namespace be
@@ -263,6 +268,15 @@ before-create to ready-notification go in
 `attachment_create_to_ready_latency_seconds`.  The latencies from
 before-create to notification of a bad state are collected in
 `attachment_create_to_broken_latency_seconds`.
+
+The latencies from before-create to completion of a half test are
+collected in the Prometheus histogram
+`attachment_create_to_half_tested_latency_seconds`, and the latencies
+from readindess to completion of a half test are collected in
+`attachment_ready_to_half_tested_latency_seconds`.  The corresponding
+latencies for full tests are collected in
+`attachment_create_to_tested_latency_seconds` and
+`attachment_ready_to_tested_latency_seconds`.
 
 The driver also produces counters of successful and failed create and
 delete operations on NetworkAttachments: `successful_creates`,
