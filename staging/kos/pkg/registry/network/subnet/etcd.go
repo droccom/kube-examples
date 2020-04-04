@@ -29,9 +29,9 @@ import (
 func NewREST(scheme *runtime.Scheme,
 	optsGetter generic.RESTOptionsGetter,
 	checkConflicts bool,
-	subnetInformer informers.SubnetInformer) (*registry.REST, error) {
+	subnetInformer informers.SubnetInformer) (*registry.REST, *registry.StatusREST) {
 
-	strategy := NewStrategy(scheme, checkConflicts, subnetInformer.Informer())
+	strategy, statusStrategy := NewStrategies(scheme, checkConflicts, subnetInformer.Informer())
 
 	store := &genericregistry.Store{
 		NewFunc:                  func() runtime.Object { return &network.Subnet{} },
@@ -45,7 +45,11 @@ func NewREST(scheme *runtime.Scheme,
 	}
 	options := &generic.StoreOptions{RESTOptions: optsGetter, AttrFunc: GetAttrs}
 	if err := store.CompleteWithOptions(options); err != nil {
-		return nil, err
+		panic(err)
 	}
-	return &registry.REST{store}, nil
+
+	statusStore := *store
+	statusStore.UpdateStrategy = statusStrategy
+	return &registry.REST{store, []string{"all", "kos"}, []string{"sn"}},
+		&registry.StatusREST{&statusStore}
 }

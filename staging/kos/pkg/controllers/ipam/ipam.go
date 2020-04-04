@@ -17,6 +17,8 @@ limitations under the License.
 package ipam
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	gonet "net"
@@ -780,27 +782,47 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 }
 
 func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.NetworkAttachment, nadat *NetworkAttachmentData, statusErrs []string, subnetUID k8stypes.UID, lockForStatus ParsedLock, ipForStatus gonet.IP) error {
-	att2 := att.DeepCopy()
-	att2.Status.Errors.IPAM = statusErrs
-	att2.Status.LockUID = string(lockForStatus.UID)
-	att2.Status.AddressVNI = lockForStatus.VNI
-	if ipForStatus == nil {
-		att2.Status.IPv4 = ""
-	} else {
-		att2.Status.IPv4 = ipForStatus.String()
+	test, _ := ctlr.netattLister.NetworkAttachments(ns).Get(name)
+	if test == nil { // It has been deleted, don't bother
+		return nil
 	}
+	dStatus := netv1a1.NetworkAttachmentStatus{
+		Errors:     netv1a1.NetworkAttachmentErrors{IPAM: statusErrs},
+		LockUID:    string(lockForStatus.UID),
+		AddressVNI: lockForStatus.VNI,
+	}
+	if ipForStatus != nil {
+		dStatus.IPv4 = ipForStatus.String()
+	}
+	var pb bytes.Buffer
+	encoder := json.NewEncoder(&pb)
+	err := encoder.Encode(dStatus)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to Encode(%#+v): %#+v", dStatus, err))
+	}
+	patchString := pb.String()
+	if patchString[0] != '{' {
+		panic(patchString)
+	}
+	if len(statusErrs) == 0 {
+		patchString = `{"errors":{"ipam":null}, ` + patchString[1:]
+	}
+	if ipForStatus == nil {
+		patchString = `{"ipv4":null, ` + patchString[1:]
+	}
+	patchString = fmt.Sprintf(`{"metadata":{"uid":%q}, "status": %s}`, string(att.UID), patchString)
 	attachmentOps := ctlr.netIfc.NetworkAttachments(ns)
 	tBefore := time.Now()
-	att3, err := attachmentOps.Update(att2)
+	att3, err := attachmentOps.Patch(att.Name, k8stypes.StrategicMergePatchType, []byte(patchString), "status")
 	tAfter := time.Now()
 	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(statusErrs) > 0), "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds()
 		ctlr.attachmentCreateToAddressHistogram.Observe(deltaS)
 		if len(statusErrs) > 0 {
-			klog.V(4).Infof("Recorded errors %v in status of %s/%s, old ResourceVersion=%s, new ResourceVersion=%s", statusErrs, ns, name, att.ResourceVersion, att3.ResourceVersion)
+			klog.V(4).Infof("Recorded errors %v in status of %s/%s, subnetUID=%s, old ResourceVersion=%s, new ResourceVersion=%s, deltaS=%v", statusErrs, ns, name, subnetUID, att.ResourceVersion, att3.ResourceVersion, deltaS)
 		} else {
-			klog.V(4).Infof("Recorded locked address %s in status of %s/%s, old ResourceVersion=%s, new ResourceVersion=%s, subnetUID=%s", ipForStatus, ns, name, att.ResourceVersion, att3.ResourceVersion, subnetUID)
+			klog.V(4).Infof("Recorded locked address %s in status of %s/%s, subnetUID=%s, old ResourceVersion=%s, new ResourceVersion=%s, deltaS=%v", ipForStatus, ns, name, subnetUID, att.ResourceVersion, att3.ResourceVersion, deltaS)
 			nadat.anticipatingResourceVersion = att.ResourceVersion
 			nadat.anticipatedResourceVersion = att3.ResourceVersion
 			nadat.anticipationSubnetUID = subnetUID

@@ -7,10 +7,14 @@ rules:
   - network.example.com
   resources:
   - subnets
-  - subnets/status
   verbs:
   - list
   - watch
+- apiGroups:
+  - network.example.com
+  resources:
+  - subnets/status
+  verbs:
   - update
 - apiGroups:
   - ""
@@ -18,4 +22,3 @@ rules:
   - events
   verbs:
   - create
-  - patch

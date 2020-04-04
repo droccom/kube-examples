@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strconv"
 
+	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,9 +34,11 @@ import (
 	"k8s.io/examples/staging/kos/pkg/apis/network"
 )
 
-// NewStrategy creates and returns a networkattachmentStrategy instance.
-func NewStrategy(typer runtime.ObjectTyper) networkattachmentStrategy {
-	return networkattachmentStrategy{typer, names.SimpleNameGenerator}
+// NewStrategies creates and returns strategy objects for the main
+// resource and its status subresource
+func NewStrategies(typer runtime.ObjectTyper) (networkattachmentStrategy, networkattachmentStatusStrategy) {
+	s := networkattachmentStrategy{typer, names.SimpleNameGenerator}
+	return s, networkattachmentStatusStrategy{s}
 }
 
 // GetAttrs returns labels.Set, fields.Set,
@@ -95,20 +98,13 @@ func (networkattachmentStrategy) PrepareForCreate(ctx context.Context, obj runti
 func (networkattachmentStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
 	oldNA := old.(*network.NetworkAttachment)
 	newNA := obj.(*network.NetworkAttachment)
+	newNA.Status = oldNA.Status
 	newNA.ExtendedObjectMeta = oldNA.ExtendedObjectMeta
-	now := network.Now()
 	// ValidateUpdate insists that the only Spec field that can change is PostDeleteExec
 	if !SliceOfStringEqual(oldNA.Spec.PostDeleteExec, newNA.Spec.PostDeleteExec) {
+		now := network.Now()
 		newNA.Writes = newNA.Writes.SetWrite(network.NASectionSpec, now)
-	}
-	if oldNA.Status.LockUID != newNA.Status.LockUID || oldNA.Status.AddressVNI != newNA.Status.AddressVNI || oldNA.Status.IPv4 != newNA.Status.IPv4 || !SliceOfStringEqual(oldNA.Status.Errors.IPAM, newNA.Status.Errors.IPAM) {
-		newNA.Writes = newNA.Writes.SetWrite(network.NASectionAddr, now)
-	}
-	if oldNA.Status.MACAddress != newNA.Status.MACAddress || oldNA.Status.IfcName != newNA.Status.IfcName || oldNA.Status.HostIP != newNA.Status.HostIP || !SliceOfStringEqual(oldNA.Status.Errors.Host, newNA.Status.Errors.Host) {
-		newNA.Writes = newNA.Writes.SetWrite(network.NASectionImpl, now)
-	}
-	if !oldNA.Status.PostCreateExecReport.Equiv(newNA.Status.PostCreateExecReport) {
-		newNA.Writes = newNA.Writes.SetWrite(network.NASectionExecReport, now)
+		newNA.Generation = oldNA.Generation + 1
 	}
 }
 
@@ -153,4 +149,38 @@ func (networkattachmentStrategy) ValidateUpdate(ctx context.Context, obj, old ru
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "postCreateExec"), immutableFieldMsg))
 	}
 	return errs
+}
+
+type networkattachmentStatusStrategy struct {
+	networkattachmentStrategy
+}
+
+var _ rest.RESTUpdateStrategy = networkattachmentStatusStrategy{}
+
+func (networkattachmentStatusStrategy) AllowUnconditionalUpdate() bool {
+	return true
+}
+
+func (networkattachmentStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	newNA := obj.(*network.NetworkAttachment)
+	oldNA := old.(*network.NetworkAttachment)
+	// update is not allowed to set spec
+	newNA.Spec = oldNA.Spec
+	newNA.ExtendedObjectMeta = oldNA.ExtendedObjectMeta
+	now := network.Now()
+	if oldNA.Status.LockUID != newNA.Status.LockUID || oldNA.Status.AddressVNI != newNA.Status.AddressVNI || oldNA.Status.IPv4 != newNA.Status.IPv4 || !SliceOfStringEqual(oldNA.Status.Errors.IPAM, newNA.Status.Errors.IPAM) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionAddr, now)
+	}
+	if oldNA.Status.MACAddress != newNA.Status.MACAddress || oldNA.Status.IfcName != newNA.Status.IfcName || oldNA.Status.HostIP != newNA.Status.HostIP || !SliceOfStringEqual(oldNA.Status.Errors.Host, newNA.Status.Errors.Host) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionImpl, now)
+	}
+	if !oldNA.Status.PostCreateExecReport.Equiv(newNA.Status.PostCreateExecReport) {
+		newNA.Writes = newNA.Writes.SetWrite(network.NASectionExecReport, now)
+	}
+}
+
+func (networkattachmentStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	na := obj.(*network.NetworkAttachment)
+	allErrs := apimachineryvalidation.ValidateObjectMeta(&na.ObjectMeta, true, func(name string, prefix bool) []string { return nil }, field.NewPath("metadata"))
+	return allErrs
 }
