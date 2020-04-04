@@ -675,7 +675,7 @@ func (ctlr *IPAMController) deleteIPLockObject(parsed ParsedLock) error {
 	tBefore := time.Now()
 	err := lockOps.Delete(parsed.name, &delOpts)
 	tAfter := time.Now()
-	ctlr.lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ctlr.lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": FormatErrVal(err != nil && !k8serrors.IsNotFound(err))}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		klog.V(4).Infof("Deleted IPLock %s/%s=%s", parsed.ns, parsed.name, string(parsed.UID))
 	} else if k8serrors.IsNotFound(err) {
