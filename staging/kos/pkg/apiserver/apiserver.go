@@ -28,7 +28,6 @@ import (
 	"k8s.io/examples/staging/kos/pkg/apis/network"
 	"k8s.io/examples/staging/kos/pkg/apis/network/install"
 	networkinformers "k8s.io/examples/staging/kos/pkg/client/informers/internalversion"
-	networkregistry "k8s.io/examples/staging/kos/pkg/registry"
 	iplockstorage "k8s.io/examples/staging/kos/pkg/registry/network/iplock"
 	networkattachmentstorage "k8s.io/examples/staging/kos/pkg/registry/network/networkattachment"
 	subnetstorage "k8s.io/examples/staging/kos/pkg/registry/network/subnet"
@@ -118,9 +117,13 @@ func (c completedConfig) New() (*NetworkAPIServer, error) {
 	apiGroupInfo := genericapiserver.NewDefaultAPIGroupInfo(network.GroupName, Scheme, metav1.ParameterCodec, Codecs)
 
 	v1alpha1storage := map[string]rest.Storage{}
-	v1alpha1storage["networkattachments"] = networkregistry.RESTInPeace(networkattachmentstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter))
-	v1alpha1storage["subnets"] = networkregistry.RESTInPeace(subnetstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter, c.ExtraConfig.CheckSubnetsConflicts, c.ExtraConfig.NetworkSharedInformerFactory.Network().InternalVersion().Subnets()))
-	v1alpha1storage["iplocks"] = networkregistry.RESTInPeace(iplockstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter))
+	naStore, naStatusStore := networkattachmentstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter)
+	v1alpha1storage["networkattachments"] = naStore
+	v1alpha1storage["networkattachments/status"] = naStatusStore
+	snStore, snStatusStore := subnetstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter, c.ExtraConfig.CheckSubnetsConflicts, c.ExtraConfig.NetworkSharedInformerFactory.Network().InternalVersion().Subnets())
+	v1alpha1storage["subnets"] = snStore
+	v1alpha1storage["subnets/status"] = snStatusStore
+	v1alpha1storage["iplocks"] = iplockstorage.NewREST(Scheme, c.GenericConfig.RESTOptionsGetter)
 
 	apiGroupInfo.VersionedResourcesStorageMap["v1alpha1"] = v1alpha1storage
 

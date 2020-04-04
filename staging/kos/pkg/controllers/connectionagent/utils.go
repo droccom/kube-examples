@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfields "k8s.io/apimachinery/pkg/fields"
 	k8scache "k8s.io/client-go/tools/cache"
@@ -122,3 +123,30 @@ func formatErrVal(err bool) string {
 	}
 	return "ok"
 }
+
+func SummarizeErr(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if IsNotFound(err) {
+		return ErrValNF
+	}
+	return "err"
+}
+
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if k8serrors.IsNotFound(err) {
+		return true
+	}
+	// https://github.com/kubernetes/kubernetes/issues/89985
+	msg := err.Error()
+	if strings.Contains(msg, "Precondition failed: UID in precondition") && strings.HasSuffix(strings.TrimSpace(msg), ", UID in object meta:") {
+		return true
+	}
+	return false
+}
+
+const ErrValNF = "nf"
