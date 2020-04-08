@@ -15,7 +15,7 @@ rules:
   resources:
   - networkattachments/status
   verbs:
-  - patch
+  - update
 - apiGroups:
   - ""
   resources:

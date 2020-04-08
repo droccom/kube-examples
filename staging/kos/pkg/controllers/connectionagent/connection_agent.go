@@ -17,8 +17,6 @@ limitations under the License.
 package connectionagent
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	gonet "net"
 	"net/http"
@@ -1058,41 +1056,15 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 	if test == nil { // It has been deleted, don't bother
 		return nil
 	}
-	dStatus := netv1a1.NetworkAttachmentStatus{
-		MACAddress:           macAddr,
-		IfcName:              ifcName,
-		HostIP:               ca.hostIP.String(),
-		Errors:               netv1a1.NetworkAttachmentErrors{Host: statusErrs},
-		PostCreateExecReport: pcer,
-	}
-	var pb bytes.Buffer
-	encoder := json.NewEncoder(&pb)
-	err := encoder.Encode(dStatus)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to Encode(%#+v): %#+v", dStatus, err))
-	}
-	patchString := pb.String()
-	if patchString[0] != '{' {
-		panic(patchString)
-	}
-	if len(statusErrs) == 0 {
-		patchString = `{"errors":{"host":null}, ` + patchString[1:]
-	}
-	if len(macAddr) == 0 {
-		patchString = `{"macAddress":null, ` + patchString[1:]
-	}
-	if len(ifcName) == 0 {
-		patchString = `{"ifcName":null, ` + patchString[1:]
-	}
-	if pcer == nil || pcer.Equiv(&netv1a1.ExecReport{}) {
-		patchString = `{"postCreateExecReport":null, ` + patchString[1:]
-	}
-	patchString = fmt.Sprintf(`{"metadata":{"uid":%q}, "status": %s}`, string(att.UID), patchString)
-	patchBytes := []byte(patchString)
+	att2 := att.DeepCopy()
+	att2.Status.MACAddress = macAddr
+	att2.Status.IfcName = ifcName
+	att2.Status.HostIP = ca.hostIP.String()
+	att2.Status.Errors.Host = statusErrs
+	att2.Status.PostCreateExecReport = pcer
 	tBeforeUpdate := time.Now()
-	updatedAtt, err := ca.netv1a1Ifc.NetworkAttachments(att.Namespace).Patch(att.Name, k8stypes.StrategicMergePatchType, patchBytes, "status")
+	updatedAtt, err := ca.netv1a1Ifc.NetworkAttachments(att.Namespace).UpdateStatus(att2)
 	tAfterUpdate := time.Now()
-
 	ca.attachmentStatusHistograms.With(prometheus.Labels{"statusErr": formatErrVal(len(statusErrs) > 0), "err": formatErrVal(err != nil)}).Observe(tAfterUpdate.Sub(tBeforeUpdate).Seconds())
 
 	if err == nil {

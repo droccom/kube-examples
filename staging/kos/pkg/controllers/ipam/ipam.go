@@ -17,8 +17,6 @@ limitations under the License.
 package ipam
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	gonet "net"
@@ -786,34 +784,18 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	if test == nil { // It has been deleted, don't bother
 		return nil
 	}
-	dStatus := netv1a1.NetworkAttachmentStatus{
-		Errors:     netv1a1.NetworkAttachmentErrors{IPAM: statusErrs},
-		LockUID:    string(lockForStatus.UID),
-		AddressVNI: lockForStatus.VNI,
-	}
-	if ipForStatus != nil {
-		dStatus.IPv4 = ipForStatus.String()
-	}
-	var pb bytes.Buffer
-	encoder := json.NewEncoder(&pb)
-	err := encoder.Encode(dStatus)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to Encode(%#+v): %#+v", dStatus, err))
-	}
-	patchString := pb.String()
-	if patchString[0] != '{' {
-		panic(patchString)
-	}
-	if len(statusErrs) == 0 {
-		patchString = `{"errors":{"ipam":null}, ` + patchString[1:]
-	}
+	att2 := att.DeepCopy()
+	att2.Status.Errors.IPAM = statusErrs
+	att2.Status.LockUID = string(lockForStatus.UID)
+	att2.Status.AddressVNI = lockForStatus.VNI
 	if ipForStatus == nil {
-		patchString = `{"ipv4":null, ` + patchString[1:]
+		att2.Status.IPv4 = ""
+	} else {
+		att2.Status.IPv4 = ipForStatus.String()
 	}
-	patchString = fmt.Sprintf(`{"metadata":{"uid":%q}, "status": %s}`, string(att.UID), patchString)
 	attachmentOps := ctlr.netIfc.NetworkAttachments(ns)
 	tBefore := time.Now()
-	att3, err := attachmentOps.Patch(att.Name, k8stypes.StrategicMergePatchType, []byte(patchString), "status")
+	att3, err := attachmentOps.UpdateStatus(att2)
 	tAfter := time.Now()
 	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(statusErrs) > 0), "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
