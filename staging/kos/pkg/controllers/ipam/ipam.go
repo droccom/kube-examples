@@ -150,10 +150,8 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
 		},
 		[]string{"op", "err"})
-	errValT, errValF := FormatErrVal(true), FormatErrVal(false)
-	lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": errValT})
+	errValF := FmtErrBool(false)
 	lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": errValF})
-	lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": errValT})
 	lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": errValF})
 
 	attachmentCreateToAddressHistogram := prometheus.NewHistogram(
@@ -174,10 +172,7 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
 		},
 		[]string{"statusErr", "err"})
-	attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": errValT, "err": errValT})
 	attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": errValF, "err": errValF})
-	attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": errValT, "err": errValF})
-	attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": errValF, "err": errValT})
 
 	anticipationUsedHistogram := prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -677,7 +672,7 @@ func (ctlr *IPAMController) deleteIPLockObject(parsed ParsedLock) error {
 	tBefore := time.Now()
 	err := lockOps.Delete(parsed.name, &delOpts)
 	tAfter := time.Now()
-	ctlr.lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": FormatErrVal(err != nil && !k8serrors.IsNotFound(err))}).Observe(tAfter.Sub(tBefore).Seconds())
+	ctlr.lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": FmtErrBool(err != nil && !k8serrors.IsNotFound(err))}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		klog.V(4).Infof("Deleted IPLock %s/%s=%s", parsed.ns, parsed.name, string(parsed.UID))
 	} else if k8serrors.IsNotFound(err) {
@@ -727,7 +722,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 		tBefore := time.Now()
 		ipl2, err = lockOps.Create(ipl)
 		tAfter := time.Now()
-		ctlr.lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+		ctlr.lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": FmtErrBool(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 		if err == nil {
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
@@ -784,6 +779,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.NetworkAttachment, nadat *NetworkAttachmentData, statusErrs []string, subnetUID k8stypes.UID, lockForStatus ParsedLock, ipForStatus gonet.IP) error {
 	test, _ := ctlr.netattLister.NetworkAttachments(ns).Get(name)
 	if test == nil { // It has been deleted, don't bother
+		klog.V(4).Infof("Did not attempt to update status of deleted NetworkAttachment %s/%s", ns, name)
 		return nil
 	}
 	dStatus := netv1a1.NetworkAttachmentStatus{
@@ -815,7 +811,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	tBefore := time.Now()
 	att3, err := attachmentOps.Patch(att.Name, k8stypes.StrategicMergePatchType, []byte(patchString), "status")
 	tAfter := time.Now()
-	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(statusErrs) > 0), "err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FmtErrBool(len(statusErrs) > 0), "err": SummarizeErr(err)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds()
 		ctlr.attachmentCreateToAddressHistogram.Observe(deltaS)
@@ -836,7 +832,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	} else {
 		errMsg = fmt.Sprintf("%s allocated address %s", errMsg, ipForStatus)
 	}
-	if k8serrors.IsNotFound(err) {
+	if IsNotFound(err) {
 		klog.V(4).Infof("%s: NetworkAttachment was deleted.", errMsg)
 		return nil
 	}
@@ -1051,9 +1047,36 @@ func (list ParsedLockList) RemFunc(elt ParsedLock) (sans ParsedLockList, diff bo
 	return list, false
 }
 
-func FormatErrVal(err bool) string {
+func FmtErrBool(err bool) string {
 	if err {
 		return "err"
 	}
 	return "ok"
 }
+
+func SummarizeErr(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	if IsNotFound(err) {
+		return ErrValNF
+	}
+	return "err"
+}
+
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if k8serrors.IsNotFound(err) {
+		return true
+	}
+	// https://github.com/kubernetes/kubernetes/issues/89985
+	msg := err.Error()
+	if strings.Contains(msg, "Precondition failed: UID in precondition") && strings.HasSuffix(strings.TrimSpace(msg), ", UID in object meta:") {
+		return true
+	}
+	return false
+}
+
+const ErrValNF = "nf"

@@ -1056,6 +1056,14 @@ func (ca *ConnectionAgent) localAttachmentIsUpToDate(att *netv1a1.NetworkAttachm
 func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttachment, macAddr, ifcName string, statusErrs sliceOfString, pcer *netv1a1.ExecReport) error {
 	test, _ := ca.localAttsLister.NetworkAttachments(att.Namespace).Get(att.Name)
 	if test == nil { // It has been deleted, don't bother
+		klog.V(3).Infof("Did not attempt to update deleted NetworkAttachment %s's status: oldRV=%s, ipv4=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
+			parse.AttNSN(att),
+			att.ResourceVersion,
+			att.Status.IPv4,
+			macAddr,
+			ifcName,
+			statusErrs,
+			pcer)
 		return nil
 	}
 	dStatus := netv1a1.NetworkAttachmentStatus{
@@ -1093,10 +1101,10 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 	updatedAtt, err := ca.netv1a1Ifc.NetworkAttachments(att.Namespace).Patch(att.Name, k8stypes.StrategicMergePatchType, patchBytes, "status")
 	tAfterUpdate := time.Now()
 
-	ca.attachmentStatusHistograms.With(prometheus.Labels{"statusErr": formatErrVal(len(statusErrs) > 0), "err": formatErrVal(err != nil)}).Observe(tAfterUpdate.Sub(tBeforeUpdate).Seconds())
+	ca.attachmentStatusHistograms.With(prometheus.Labels{"statusErr": formatErrVal(len(statusErrs) > 0), "err": SummarizeErr(err)}).Observe(tAfterUpdate.Sub(tBeforeUpdate).Seconds())
 
 	if err == nil {
-		klog.V(3).Infof("Updated NetworkAttachment %s's status: oldRV=%s, newRV=%s, ipv4=%s, hostIP=%s, macAddress=%s, ifcName=%s, statusErrs=%#+v, PostCreateExecReport=%#+v",
+		klog.V(3).Infof("Updated NetworkAttachment %s's status: oldRV=%s, newRV=%s, ipv4=%s, hostIP=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
 			parse.AttNSN(att),
 			att.ResourceVersion,
 			updatedAtt.ResourceVersion,
@@ -1112,8 +1120,8 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 		return nil
 	}
 
-	if k8serrors.IsNotFound(err) {
-		klog.V(3).Infof("Did not update deleted NetworkAttachment %s's status: oldRV=%s, newRV=%s, ipv4=%s, hostIP=%s, macAddress=%s, ifcName=%s, statusErrs=%#+v, PostCreateExecReport=%#+v",
+	if IsNotFound(err) {
+		klog.V(3).Infof("Could not update deleted NetworkAttachment %s's status: oldRV=%s, newRV=%s, ipv4=%s, hostIP=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
 			parse.AttNSN(att),
 			att.ResourceVersion,
 			updatedAtt.ResourceVersion,
@@ -1126,7 +1134,7 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 		return nil
 	}
 
-	return fmt.Errorf("status update with RV=%s, ipv4=%s, hostIP=%s, macAddress=%s, ifcName=%s, statusErrs=%#+v, PostCreateExecReport=%#+v failed: %s",
+	return fmt.Errorf("status update with RV=%s, ipv4=%s, hostIP=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v failed: %s",
 		att.ResourceVersion,
 		att.Status.IPv4,
 		ca.hostIP,
