@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 
+	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -40,14 +41,16 @@ import (
 
 const subnetVNIIndex = "subnetVNI"
 
-// NewStrategy creates a subnetStrategy instance and returns a pointer to it.
-func NewStrategy(typer runtime.ObjectTyper, checkConflicts bool, subnetInformer cache.SharedIndexInformer) *subnetStrategy {
+// NewStrategies creates and returns strategy objects for the main
+// resource and its status subresource
+func NewStrategies(typer runtime.ObjectTyper, checkConflicts bool, subnetInformer cache.SharedIndexInformer) (*subnetStrategy, subnetStatusStrategy) {
 	subnetInformer.AddIndexers(map[string]cache.IndexFunc{subnetVNIIndex: SubnetVNI})
 	subnetIndexer := subnetInformer.GetIndexer()
-	return &subnetStrategy{typer,
+	s := &subnetStrategy{typer,
 		names.SimpleNameGenerator,
 		checkConflicts,
 		subnetIndexer}
+	return s, subnetStatusStrategy{s}
 }
 
 // GetAttrs returns labels.Set, fields.Set,
@@ -105,12 +108,8 @@ func (*subnetStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object)
 func (*subnetStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
 	oldSubnet := old.(*network.Subnet)
 	newSubnet := obj.(*network.Subnet)
+	newSubnet.Status = oldSubnet.Status
 	newSubnet.ExtendedObjectMeta = oldSubnet.ExtendedObjectMeta
-	now := network.Now()
-	// the Spec is immutable, see ValidateUpdate
-	if newSubnet.Status.Validated != oldSubnet.Status.Validated || !SliceOfStringEqual(newSubnet.Status.Errors, oldSubnet.Status.Errors) {
-		newSubnet.Writes = newSubnet.Writes.SetWrite(network.SubnetSectionStatus, now)
-	}
 }
 
 func SliceOfStringEqual(x, y []string) bool {
@@ -209,4 +208,32 @@ func SubnetVNI(obj interface{}) ([]string, error) {
 		return []string{strconv.FormatUint(uint64(s.Spec.VNI), 10)}, nil
 	}
 	return nil, errors.New("received object which is not an internal version subnet")
+}
+
+type subnetStatusStrategy struct {
+	*subnetStrategy
+}
+
+var _ rest.RESTUpdateStrategy = subnetStatusStrategy{}
+
+func (subnetStatusStrategy) AllowUnconditionalUpdate() bool {
+	return true
+}
+
+func (subnetStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+	newSubnet := obj.(*network.Subnet)
+	oldSubnet := old.(*network.Subnet)
+	// update is not allowed to set spec
+	newSubnet.Spec = oldSubnet.Spec
+	newSubnet.ExtendedObjectMeta = oldSubnet.ExtendedObjectMeta
+	now := network.Now()
+	if newSubnet.Status.Validated != oldSubnet.Status.Validated || !SliceOfStringEqual(newSubnet.Status.Errors, oldSubnet.Status.Errors) {
+		newSubnet.Writes = newSubnet.Writes.SetWrite(network.SubnetSectionStatus, now)
+	}
+}
+
+func (subnetStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+	subnet := obj.(*network.Subnet)
+	allErrs := apimachineryvalidation.ValidateObjectMeta(&subnet.ObjectMeta, true, func(name string, prefix bool) []string { return nil }, field.NewPath("metadata"))
+	return allErrs
 }

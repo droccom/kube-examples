@@ -585,7 +585,7 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 	s2.Status.Errors = validationErrors
 
 	tBefore := time.Now()
-	s3, err := v.netIfc.Subnets(s2.Namespace).Update(s2)
+	s3, err := v.netIfc.Subnets(s2.Namespace).UpdateStatus(s2)
 	tAfter := time.Now()
 	subnetUpdateHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil), "statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(tBefore).Seconds())
 	switch {
