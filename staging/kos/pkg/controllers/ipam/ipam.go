@@ -803,8 +803,22 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	if len(statusErrs) == 0 {
 		patchString = `{"errors":{"ipam":null}, ` + patchString[1:]
 	}
+	if len(lockForStatus.UID) == 0 {
+		patchString = `{"lockUID": null, ` + patchString[1:]
+	}
+	if lockForStatus.VNI == 0 {
+		patchString = `{"vni": null, ` + patchString[1:]
+	}
 	if ipForStatus == nil {
 		patchString = `{"ipv4":null, ` + patchString[1:]
+	}
+	patchString = strings.TrimSpace(patchString)
+	if !strings.HasSuffix(patchString, "}") {
+		panic(patchString)
+	}
+	allButClose := strings.TrimSpace(patchString[:len(patchString)-1])
+	if strings.HasSuffix(allButClose, ",") {
+		patchString = allButClose[:len(allButClose)-1] + "}"
 	}
 	patchString = fmt.Sprintf(`{"metadata":{"uid":%q}, "status": %s}`, string(att.UID), patchString)
 	attachmentOps := ctlr.netIfc.NetworkAttachments(ns)
