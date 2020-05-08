@@ -285,34 +285,10 @@ an existing subnet *X*, it does a live list of all the existing subnets
 against the extension API server, and compares *X* against the results of the
 list. If no violation of the invariants is found, *X*'s
 `SubnetStatus.Validated` is set to `true`. The validator also keeps a
-*conflicts cache* which associates each processed subnet *Y*'s namespaced
-name to *Y*'s UID and a list with the namespaced names of the subnets whose
-validation failed because of a conflict with *Y*. If, while validating *X*,
-a conflict with *Y* is found, *Y*'s *UID* is compared to that stored in *Y*'s
-namespaced name *conflicts cache* entry. If they match, *X*'s status is
-updated by adding information on the conflict, and *X*'s namespaced name is
-added to the conflicts cache entry for *Y*'s namespaced name. If they do not
-match, no further action is taken and *X* is processed again after a delay.
-If *Y* is deleted the *conflicts cache* entry for its namespaced name is
-deleted and all the namespaced names in it are enqueued so that their
-subnets can be re-validated: they did not pass validation because of a
-conflict with *Y*, but *Y* no longer exists so the conflict might have
-disappeared and they might be successfully validated now. The same happens
-if a subnet *Y1* with the same namespaced name as *Y* is created shortly
-after *Y*'s deletion and the validator misses the deletion and processes
-*Y1* directly, the only difference being that the *conflicts cache* entry
-for *Y* and *Y1*'s namespaced name is kept and reset by overriding *Y*'s UID
-with *Y1*'s and resetting the list of conflicting subnets' namespaced names.
-Making the addition of *X* to the conflicts cache corresponding to *Y*'s
-namespaced name fail on mistach with the *UID* in that conflict cache
-correctly handles the possible concurrent execution where one goroutine
-processing *X* finds a conflict with *Y*, then *Y* is deleted and immediately
-after another subnet *Y1* with the same namespaced name but different VNI
-and CIDR block is created and a different goroutine processes *Y1*, then the
-first goroutine gets around to trying to add *X* to the conflict cache which
-belonged to *Y* and now belongs to *Y1*; doing that addition in this situation
-would falsely indicate that *X* does not need to be reconsidered until *Y1*
-is deleted.
+*conflicts cache* which associates each processed subnet *Y* to the subnets
+whose validation failed because of a conflict with *Y*. This allows
+re-validating such subnets upon *Y*'s deletion, as they might have just
+become valid if the one with *Y* was their last standing conflict.
 
 One apparently odd design choice is having the validator retrieve all the
 subnets with a live list against the API server rather than a cache-based
@@ -323,27 +299,14 @@ intended to be a singleton, but Kubernetes makes no guarantee that there
 cannot be transients with more than one running. Assume two --- *V1* and *V2*
 --- are running and cache-based lists are used. Also assume a subnet *X* is
 created and shortly after another subnet *Y* in conflict with *X* is created.
-*X* and *Y* might appear in *V1* and *V2*'s Informers' caches in opposite
-orders: *V1* processes *X* first, and when it does the cache-based list *Y*
-is not in the cache yet. Likewise, *V2* might validate *Y* without seeing *X*.
-Hence both *X* and *Y* are marked as validated even if they are in conflict. The
-problem is due to the fact that Informer's caches are not populated in order.
-API objects are stored in `etcd` in a sequential order represented by a
-*resource version* (basically a logical clock). Informers caches are populated
-through two API calls: *LIST* and *WATCH*. A *LIST* is a request-response
-which returns all the API objects matching certain parameters, while a
-*WATCH* is a long-lived request that returns a stream of create/udpate/delete
-notifications for API objects starting at a given *resource version*
-(typically representing the state of `etcd` corresponding to a previous
-*LIST* result). Notifications delivered through a *WATCH* are applied to
-Informers caches in resource version order, while the results of a *LIST* are
-not. Thus, if while validating *X* and *Y* *V2*'s Informer cache is being
-populated through a *LIST*, *Y* might appear in its Informer cache before *X*
-even if it's the newest. On the other hand, results for live lists against the
-API server are populated from `etcd`: if *Y* already exists, there's the
-guarantee that *X* is also in the results. Hence, using live lists instead of
-cache-based ones prevents the race condition described above.
-
+The problem is that Informer caches are not necessarily populated in order
+(read [here](https://groups.google.com/forum/#!topic/kubernetes-sig-api-machinery/ci3PcX-TAWw)
+for details): there's no guarantee that *X* appears in an Informer cache
+before *Y*. This means *X* and *Y* might appear in *V1* and *V2*'s Informers'
+caches in opposite orders: *V1* processes *X* first, and when it does the
+cache-based list *Y* is not in the cache yet. Likewise, *V2* might validate
+*Y* without seeing *X*. Hence both *X* and *Y* are marked as validated even if
+they are in conflict.
 
 ## The IPAM Controller
 
