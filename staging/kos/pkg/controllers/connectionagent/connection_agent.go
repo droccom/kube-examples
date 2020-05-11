@@ -1094,16 +1094,15 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 	}
 
 	if IsNotFound(err) {
-		klog.V(3).Infof("Could not update deleted NetworkAttachment %s's status: oldRV=%s, newRV=%s, ipv4=%s, hostIP=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
+		klog.V(3).Infof("Could not update deleted NetworkAttachment %s's status: oldRV=%s, ipv4=%s, hostIP=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
 			parse.AttNSN(att),
 			att.ResourceVersion,
-			updatedAtt.ResourceVersion,
-			updatedAtt.Status.IPv4,
-			updatedAtt.Status.HostIP,
-			updatedAtt.Status.MACAddress,
-			updatedAtt.Status.IfcName,
-			updatedAtt.Status.Errors.Host,
-			updatedAtt.Status.PostCreateExecReport)
+			att.Status.IPv4,
+			att2.Status.HostIP,
+			att2.Status.MACAddress,
+			att2.Status.IfcName,
+			att2.Status.Errors.Host,
+			att2.Status.PostCreateExecReport)
 		return nil
 	}
 
