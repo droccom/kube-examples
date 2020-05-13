@@ -725,7 +725,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
 			if len(att.Status.IPv4) == 0 {
-				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionSpec).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds())
+				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionSpec).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
 			}
 			break
 		} else if k8serrors.IsAlreadyExists(err) {
@@ -795,7 +795,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	tAfter := time.Now()
 	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FmtErrBool(len(statusErrs) > 0), "err": SummarizeErr(err)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
-		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec)).Seconds()
+		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds()
 		ctlr.attachmentCreateToAddressHistogram.Observe(deltaS)
 		if len(statusErrs) > 0 {
 			klog.V(4).Infof("Recorded errors %v in status of %s/%s, subnetUID=%s, old ResourceVersion=%s, new ResourceVersion=%s, deltaS=%v", statusErrs, ns, name, subnetUID, att.ResourceVersion, att3.ResourceVersion, deltaS)

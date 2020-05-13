@@ -19,8 +19,6 @@ package network
 import (
 	"time"
 
-	fuzz "github.com/google/gofuzz"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -45,14 +43,19 @@ type ObjectWrite struct {
 	Section string
 
 	// ServerTime is the time when the write was recorded at the apiserver
-	ServerTime Timestamp
+	ServerTime metav1.MicroTime
 }
 
 // GetServerWriteTime returns the server time of the write to the
 // given section, or zero if there was none.
-func (writes WriteSet) GetServerWriteTime(section string) Timestamp {
+func (writes WriteSet) GetServerWriteTime(section string) metav1.MicroTime {
 	wr, _ := writes.GetWrite(section)
 	return wr.ServerTime
+}
+
+// GetServerWriteTimeUnwrapped is like GetServerWriteTime but returns the inner time.Time
+func (writes WriteSet) GetServerWriteTimeUnwrapped(section string) time.Time {
+	return writes.GetServerWriteTime(section).Time
 }
 
 // GetWrite returns the write to the given section, and a bool
@@ -68,7 +71,7 @@ func (writes WriteSet) GetWrite(section string) (ObjectWrite, bool) {
 
 // SetWrite produces a revised slice that includes the given write.
 // The input is not side-effected.
-func (writes WriteSet) SetWrite(section string, serverTime Timestamp) WriteSet {
+func (writes WriteSet) SetWrite(section string, serverTime metav1.MicroTime) WriteSet {
 	n := len(writes)
 	var i int
 	for i = 0; i < n && writes[i].Section != section; i++ {
@@ -112,7 +115,7 @@ func (writes WriteSet) UnionMin(others WriteSet) WriteSet {
 	for _, wr := range writes {
 		owr, found := others.GetWrite(wr.Section)
 		if found {
-			owr.ServerTime = owr.ServerTime.Min(wr.ServerTime)
+			owr.ServerTime = TimeMin(owr.ServerTime, wr.ServerTime)
 			ans = append(ans, owr)
 		} else {
 			ans = append(ans, wr)
@@ -128,7 +131,7 @@ func (writes WriteSet) UnionMax(others WriteSet) WriteSet {
 	for _, wr := range writes {
 		owr, found := others.GetWrite(wr.Section)
 		if found {
-			owr.ServerTime = owr.ServerTime.Max(wr.ServerTime)
+			owr.ServerTime = TimeMax(owr.ServerTime, wr.ServerTime)
 			ans = append(ans, owr)
 		} else {
 			ans = append(ans, wr)
@@ -137,96 +140,25 @@ func (writes WriteSet) UnionMax(others WriteSet) WriteSet {
 	return ans
 }
 
-// Timestamp records a time and is not truncated when marshalled.  A
-// Timestamp does not record a location but is unambiguous; it is the
-// number of nanoseconds since Jan 1, 1970 began in Greenwich, UK.
-type Timestamp struct {
-	// Nano is that number.
-	Nano int64
-}
-
-// NewTime returns a wrapped instance of the provided time
-func NewTimestamp(time time.Time) Timestamp {
-	// Time::UnixNano() is unambiguous
-	return Timestamp{time.UnixNano()}
-}
-
-// Date returns the Timestamp corresponding to the supplied parameters
-// by wrapping time.Date.
-func Date(year int, month time.Month, day, hour, min, sec, nsec int, loc *time.Location) Timestamp {
-	return Timestamp{time.Date(year, month, day, hour, min, sec, nsec, loc).UnixNano()}
-}
-
-// Now returns the current local time.
-func Now() Timestamp {
-	return Timestamp{time.Now().UnixNano()}
-}
-
-// IsZero returns true if the value is zero.
-func (ts Timestamp) IsZero() bool {
-	return ts.Nano == 0
-}
-
-// Sub returns the difference between the two timestamps
-func (ts Timestamp) Sub(us Timestamp) time.Duration {
-	return time.Duration(ts.Nano - us.Nano)
-}
-
-// Before reports whether the time instant t is before u.
-func (ts Timestamp) Before(us Timestamp) bool {
-	return ts.Nano < us.Nano
-}
-
-// Equal reports whether the time instant t is equal to u.
-func (ts Timestamp) Equal(us Timestamp) bool {
-	return ts.Nano == us.Nano
-}
-
-// Min returns the earlier of the two, receiver if tie
-func (ts Timestamp) Min(us Timestamp) Timestamp {
-	if us.Before(ts) {
-		return us
+// TimeMin returns the earlier of the two given times
+func TimeMin(a, b metav1.MicroTime) metav1.MicroTime {
+	if (&b).Before(&a) {
+		return b
 	}
-	return ts
+	return a
 }
 
-// Max returns the later of the two, receiver if tie
-func (ts Timestamp) Max(us Timestamp) Timestamp {
-	if ts.Before(us) {
-		return us
+// TimeMax returns the later of the two given times
+func TimeMax(a, b metav1.MicroTime) metav1.MicroTime {
+	if b.After(a.Time) {
+		return b
 	}
-	return ts
+	return a
 }
 
-// Unix returns the local time corresponding to the given Unix time
-// by wrapping time.Unix.
-func Unix(sec int64, nsec int64) Timestamp {
-	return Timestamp{time.Unix(sec, nsec).UnixNano()}
-}
-
-// Fuzz satisfies fuzz.Interface.
-func (ts *Timestamp) Fuzz(c fuzz.Continue) {
-	if ts == nil {
-		return
-	}
-	// Allow for about 1000 years of randomness.
-	ts.Nano = time.Unix(c.Rand.Int63n(1000*365*24*60*60), c.Rand.Int63n(1000000000)).UnixNano()
-}
-
-var _ fuzz.Interface = &Timestamp{}
-
-// String formats the timestamp after shifting into UTC
-func (ts Timestamp) String() string {
-	utc := ts.Time().In(time.UTC)
-	return utc.Format(MetaTimestampFormat)
-}
-
-// MetaTimestampFormat is the format used by Timestamp::String()
-const MetaTimestampFormat = time.RFC3339Nano
-
-// Time converts to a time.Time
-func (ts Timestamp) Time() time.Time {
-	return time.Unix(0, ts.Nano)
+// Now returns time.Now() in the form used here
+func Now() metav1.MicroTime {
+	return metav1.NowMicro()
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
