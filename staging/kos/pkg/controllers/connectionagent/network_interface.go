@@ -190,7 +190,7 @@ func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttac
 	}
 	statusErrs = ca.launchCommand(parse.AttNSN(att), ifc.LocalNetIfc, att.Spec.PostCreateExec, ifc.postCreateExecReport.Store, "postCreate", true)
 	if att.Status.IfcName == "" {
-		ca.attachmentCreateToLocalIfcHistogram.Observe(tAfter.Sub(att.Writes.GetServerWriteTime(netv1a1.NASectionSpec).Time()).Seconds())
+		ca.attachmentCreateToLocalIfcHistogram.Observe(tAfter.Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
 	}
 	ca.localAttachmentsGauge.Inc()
 	ca.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "Implemented", "Created Linux network interface named %s with MAC address %s and IPv4 address %s", ifc.Name, ifc.GuestMAC, ifc.GuestIP)
@@ -210,8 +210,8 @@ func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAtta
 
 	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "CreateRemoteIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
-		naSpecWriteTime := att.Writes.GetServerWriteTime(netv1a1.NASectionSpec).Time()
-		naImplWriteTime := att.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Time()
+		naSpecWriteTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
+		naImplWriteTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionImpl)
 		if vnRelevanceTime.Before(naImplWriteTime) {
 			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(naSpecWriteTime).Seconds())
 			ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(naImplWriteTime).Seconds())

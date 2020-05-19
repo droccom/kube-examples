@@ -98,7 +98,6 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.SubnetList":              schema_pkg_apis_network_v1alpha1_SubnetList(ref),
 		"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.SubnetSpec":              schema_pkg_apis_network_v1alpha1_SubnetSpec(ref),
 		"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.SubnetStatus":            schema_pkg_apis_network_v1alpha1_SubnetStatus(ref),
-		"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.Timestamp":               schema_pkg_apis_network_v1alpha1_Timestamp(ref),
 	}
 }
 
@@ -2905,7 +2904,7 @@ func schema_pkg_apis_network_v1alpha1_ObjectWrite(ref common.ReferenceCallback) 
 					"serverTime": {
 						SchemaProps: spec.SchemaProps{
 							Description: "ServerTime is the time when the write was recorded at the apiserver",
-							Ref:         ref("k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.Timestamp"),
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime"),
 						},
 					},
 				},
@@ -2913,7 +2912,7 @@ func schema_pkg_apis_network_v1alpha1_ObjectWrite(ref common.ReferenceCallback) 
 			},
 		},
 		Dependencies: []string{
-			"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.Timestamp"},
+			"k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime"},
 	}
 }
 
@@ -3076,27 +3075,6 @@ func schema_pkg_apis_network_v1alpha1_SubnetStatus(ref common.ReferenceCallback)
 						},
 					},
 				},
-			},
-		},
-	}
-}
-
-func schema_pkg_apis_network_v1alpha1_Timestamp(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "Timestamp records a time and is not truncated when marshalled.  A Timestamp does not record a location but is unambiguous; it is the number of nanoseconds since Jan 1, 1970 began in Greenwich, UK.",
-				Type:        []string{"object"},
-				Properties: map[string]spec.Schema{
-					"nano": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Nano is that number.",
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-				},
-				Required: []string{"nano"},
 			},
 		},
 	}
