@@ -91,20 +91,22 @@ const (
 )
 
 var (
-	createLatencyHistogram      TrackingHistogram
-	createToAddressedHistogram  TrackingHistogram
-	createToReadyHistogram      TrackingHistogram
-	createToBrokenHistogram     TrackingHistogram
-	createToHalfTestedHistogram TrackingHistogram
-	readyToHalfTestedHistogram  TrackingHistogram
-	createToTestedHistogram     TrackingHistogram
-	readyToTestedHistogram      TrackingHistogram
-	deleteLatencyHistogram      TrackingHistogram
-	testCounts                  *prometheus.CounterVec
-	successfulCreates           prometheus.Counter
-	failedCreates               prometheus.Counter
-	successfulDeletes           prometheus.Counter
-	failedDeletes               prometheus.Counter
+	createLatencyHistogram         TrackingHistogram
+	createToAddressedEasyHistogram TrackingHistogram
+	createToAddressedHistogram     TrackingHistogram
+	createToReadyEasyHistogram     TrackingHistogram
+	createToReadyHistogram         TrackingHistogram
+	createToBrokenHistogram        TrackingHistogram
+	createToHalfTestedHistogram    TrackingHistogram
+	readyToHalfTestedHistogram     TrackingHistogram
+	createToTestedHistogram        TrackingHistogram
+	readyToTestedHistogram         TrackingHistogram
+	deleteLatencyHistogram         TrackingHistogram
+	testCounts                     *prometheus.CounterVec
+	successfulCreates              prometheus.Counter
+	failedCreates                  prometheus.Counter
+	successfulDeletes              prometheus.Counter
+	failedDeletes                  prometheus.Counter
 )
 
 // The following vars are used by threads to determine the time at which the
@@ -321,6 +323,7 @@ type Slot struct {
 	postCreateTime        time.Time
 	addressedTime         time.Time
 	readyTime             time.Time
+	addressContention     bool
 	fullTest              bool
 	testES                int32
 	testLgComplaints      int
@@ -338,6 +341,7 @@ func (slot *Slot) setCurrentName(slotIndex int, currentAttachmentName, currentNo
 	slot.preCreateTime = time.Time{}
 	slot.postCreateTime = time.Time{}
 	slot.addressedTime = time.Time{}
+	slot.addressContention = false
 	slot.readyTime = time.Time{}
 	slot.testedTime = time.Time{}
 	slot.brokenTime = time.Time{}
@@ -393,12 +397,13 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 	if natt.Status.IPv4 != "" {
 		if slot.addressedTime == (time.Time{}) {
 			slot.addressedTime = now
+			slot.addressContention = natt.Status.AddressContention
 		}
 	}
 	if natt.Status.IfcName != "" {
 		if slot.readyTime == (time.Time{}) {
 			slot.readyTime = now
-			glog.Infof("Attachment became ready: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, preCreateTime=%s, addressedTime=%s, readyTime=%s, ifcName=%s, MAC=%s, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, slot.preCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), natt.Status.IfcName, natt.Status.MACAddress, natt.Status.IPv4)
+			glog.Infof("Attachment became ready: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, preCreateTime=%s, addressedTime=%s, addressContention=%t, readyTime=%s, ifcName=%s, MAC=%s, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, slot.preCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), strconv.FormatBool(slot.addressContention), slot.readyTime.Format(rfc3339MilliLayout), natt.Status.IfcName, natt.Status.MACAddress, natt.Status.IPv4)
 			if *waitAfterCreate != 0 {
 				count := atomic.AddUint32(&readyCount, 1)
 				rem := uint32(*numAttachments) - count
@@ -424,13 +429,13 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 					atomic.AddUint32(&stoppers, 1)
 				}
 			}
-			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, complaints=%d, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, complaints, natt.Status.IPv4)
+			glog.Infof("Attachment was tested: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, addressContention=%t, readyTime=%s, testedTime=%s, fullTest=%v, testES=%d, complaints=%d, ipv4=%s\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), strconv.FormatBool(slot.addressContention), slot.readyTime.Format(rfc3339MilliLayout), slot.testedTime.Format(rfc3339MilliLayout), slot.fullTest, slot.testES, complaints, natt.Status.IPv4)
 		}
 	} else if hasBrokenIPAM(natt.Status.Errors.IPAM) || len(natt.Status.Errors.Host) > 0 {
 		if slot.brokenTime == (time.Time{}) {
 			cd.NoteNoTest(slotIndex)
 			slot.brokenTime = now
-			glog.Infof("Observed broken state: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, ipv4=%s, errors=%#+v\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), natt.Status.IPv4, natt.Status.Errors)
+			glog.Infof("Observed broken state: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, preCreateTime=%s, postCreateTime=%s, addressedTime=%s, addressContention=%t, ipv4=%s, errors=%#+v\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, slot.preCreateTime.Format(rfc3339MilliLayout), slot.postCreateTime.Format(rfc3339MilliLayout), slot.addressedTime.Format(rfc3339MilliLayout), strconv.FormatBool(slot.addressContention), natt.Status.IPv4, natt.Status.Errors)
 			if *stopOnBreak {
 				atomic.AddUint32(&stoppers, 1)
 			}
@@ -530,12 +535,18 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 	// now we know slot.natt != nil
 	if slot.addressedTime != (time.Time{}) {
 		createToAddressedHistogram.ObserveAt(slot.addressedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
+		if !slot.addressContention {
+			createToAddressedEasyHistogram.ObserveAt(slot.addressedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
+		}
 	}
 	if slot.natt.Status.IPv4 != "" {
 		virtNet.ipAddressChanged(slot, slot.currentNodeName, slot.natt.Status.IPv4, "", slot.currentAttachmentName)
 	}
 	if slot.readyTime != (time.Time{}) {
 		createToReadyHistogram.ObserveAt(slot.readyTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
+		if !slot.addressContention {
+			createToReadyEasyHistogram.ObserveAt(slot.readyTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
+		}
 	}
 	if slot.brokenTime != (time.Time{}) {
 		createToBrokenHistogram.ObserveAt(slot.brokenTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
@@ -914,12 +925,30 @@ func main() {
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
+	createToAddressedEasyHistogram = NewTrackingHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   HistogramNamespace,
+			Subsystem:   HistogramSubsystem,
+			Name:        "attachment_create_to_addressed_easy_latency_seconds",
+			Help:        "Latency from start of create call to notification of address, for attachments with no address contention",
+			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256},
+			ConstLabels: map[string]string{"runID": *runID},
+		})
 	createToReadyHistogram = NewTrackingHistogram(
 		prometheus.HistogramOpts{
 			Namespace:   HistogramNamespace,
 			Subsystem:   HistogramSubsystem,
 			Name:        "attachment_create_to_ready_latency_seconds",
 			Help:        "Latency from start of create call to notification of Ready",
+			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512},
+			ConstLabels: map[string]string{"runID": *runID},
+		})
+	createToReadyEasyHistogram = NewTrackingHistogram(
+		prometheus.HistogramOpts{
+			Namespace:   HistogramNamespace,
+			Subsystem:   HistogramSubsystem,
+			Name:        "attachment_create_to_ready_easy_latency_seconds",
+			Help:        "Latency from start of create call to notification of Ready, for attachments with no address contention",
 			Buckets:     []float64{-1, 0, 0.125, 0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512},
 			ConstLabels: map[string]string{"runID": *runID},
 		})
@@ -1021,6 +1050,7 @@ func main() {
 
 	prometheus.MustRegister(createLatencyHistogram, deleteLatencyHistogram,
 		createToAddressedHistogram, createToReadyHistogram,
+		createToAddressedEasyHistogram, createToReadyEasyHistogram,
 		createToBrokenHistogram,
 		createToHalfTestedHistogram, readyToHalfTestedHistogram,
 		createToTestedHistogram, readyToTestedHistogram, testCounts,
@@ -1132,7 +1162,9 @@ func main() {
 	}
 	saveProMetrics(promapi.Config{"http://localhost" + MetricsAddr, nil}, outputDir)
 	createLatencyHistogram.DumpToLog()
+	createToAddressedEasyHistogram.DumpToLog()
 	createToAddressedHistogram.DumpToLog()
+	createToReadyEasyHistogram.DumpToLog()
 	createToReadyHistogram.DumpToLog()
 	createToBrokenHistogram.DumpToLog()
 	createToHalfTestedHistogram.DumpToLog()

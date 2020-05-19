@@ -221,12 +221,17 @@ type NetworkAttachmentStatus struct {
 	// +optional
 	Errors NetworkAttachmentErrors `json:"errors,omitempty" protobuf:"bytes,1,opt,name=errors"`
 
+	// AddressContention indicates whether the address assignment was
+	// delayed due to not enough addresses being available at first.
+	AddressContention bool `json:"addressDelayed,omitempty" protbuf:"bytes,9,opt,name=addressDelayed"`
+
 	// LockUID is the UID of the IPLock object holding this attachment's
 	// IP address, or the empty string when there is no address.
 	// This field is a private detail of the implementation, not really
 	// part of the public API.
 	// +optional
 	LockUID string `json:"lockUID,omitempty" protobuf:"bytes,2,opt,name=lockUID"`
+
 	// AddressVNI is the VNI associated with this attachment's
 	// IP address assignment, or the empty string when there is no address.
 	// +optional

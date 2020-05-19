@@ -81,14 +81,18 @@ type IPAMController struct {
 	addrCacheMutex sync.Mutex
 	addrCache      map[uint32]uint32set.UInt32SetChooser
 
+	// For each attempt to allocate an address: 0 if no contention, 1 if no address available.
+	// This is not intended to capture interference in taking the lock.
+	addressContentionHistogram prometheus.Histogram
+
 	// IPLock.CreationTimestamp - NetworkAttachment.CreationTimestamp
-	attachmentCreateToLockHistogram prometheus.Histogram
+	attachmentCreateToLockHistograms *prometheus.HistogramVec
 
 	// round trip time to create an IPLock object
 	lockOpHistograms *prometheus.HistogramVec
 
 	// Attachment ObjectMeta.CreationTimestamp to return from status update
-	attachmentCreateToAddressHistogram prometheus.Histogram
+	attachmentCreateToAddressHistograms *prometheus.HistogramVec
 
 	// round trip time to update attachment status
 	attachmentUpdateHistograms *prometheus.HistogramVec
@@ -100,23 +104,30 @@ type IPAMController struct {
 	statusUsedHistogram prometheus.Histogram
 }
 
-// NetworkAttachmentData holds the local state for a NetworkAttachment.
-// The fields can only be accessed by a worker thread working on the
-// NetworkAttachment.  The data for a given attachment is used to remember a
-// status update while it is in flight. When the attachment's ResourceVersion
-// is either anticipatingResourceVersion or anticipatedResourceVersion,
-// anticipationSubnetUID is the UID of the attachment's subnet, and
-// anticipatedIPv4 != nil then that address has been chosen based on that
-// subnet and written into the attachment's status and there exists an IPLock
-// that supports this, even if this controller has not yet been notified about
-// that lock; when any other ResourceVersion or UID is seen these three fields
+// NetworkAttachmentData holds the local state for a
+// NetworkAttachment.  The fields can only be accessed by a worker
+// thread working on the NetworkAttachment.  The data for a given
+// attachment is used for two things: (1) to remember a status update
+// while it is in flight and (2) to remember (independently of Status,
+// which can take a while to be echoed back) whether there was address
+// contention for this attachment. When the attachment's
+// ResourceVersion is either anticipatingResourceVersion or
+// anticipatedResourceVersion, anticipationSubnetUID is the UID of the
+// attachment's subnet, and anticipatedIPv4 != nil then that address
+// has been chosen based on that subnet and written into the
+// attachment's status and there exists an IPLock that supports this,
+// even if this controller has not yet been notified about that lock;
+// when any other ResourceVersion or UID is seen these three fields
 // get set to their zero value.
 type NetworkAttachmentData struct {
 	anticipatedIPv4             gonet.IP
 	anticipatingResourceVersion string
 	anticipatedResourceVersion  string
 	anticipationSubnetUID       k8stypes.UID
+	addressContention           bool
 }
+
+const contentionLabel = "contention"
 
 func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	subnetInformer k8scache.SharedInformer,
@@ -130,14 +141,24 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	workers int,
 	hostname string) *IPAMController {
 
-	attachmentCreateToLockHistogram := prometheus.NewHistogram(
+	addressContentionHistogram := prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Subsystem: metricsSubsystem,
+			Name:      "address_contention",
+			Help:      "For each attempt to pick an address: 0 if no contention, 1 if no address available",
+			Buckets:   []float64{0},
+		})
+
+	attachmentCreateToLockHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: metricsNamespace,
 			Subsystem: metricsSubsystem,
 			Name:      "attachment_create_to_lock_latency_seconds",
 			Help:      "Latency from Attachment CreationTimestamp to IPLock CreationTimestamp, in seconds",
 			Buckets:   []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
-		})
+		},
+		[]string{contentionLabel})
 
 	lockOpHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -152,14 +173,15 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	lockOpHistograms.With(prometheus.Labels{"op": opCreate, "err": errValF})
 	lockOpHistograms.With(prometheus.Labels{"op": opDelete, "err": errValF})
 
-	attachmentCreateToAddressHistogram := prometheus.NewHistogram(
+	attachmentCreateToAddressHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: metricsNamespace,
 			Subsystem: metricsSubsystem,
 			Name:      "attachment_create_to_address_latency_seconds",
 			Help:      "Latency from attachment CreationTimestamp to return from status update, in seconds",
 			Buckets:   []float64{-1, 0, 0.125, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64},
-		})
+		},
+		[]string{contentionLabel})
 
 	attachmentUpdateHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -207,7 +229,7 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 			ConstLabels: map[string]string{"git_commit": version.GitCommit},
 		})
 
-	prometheus.MustRegister(attachmentCreateToLockHistogram, lockOpHistograms, attachmentCreateToAddressHistogram, attachmentUpdateHistograms, anticipationUsedHistogram, statusUsedHistogram, workerCount, versionCount)
+	prometheus.MustRegister(addressContentionHistogram, attachmentCreateToLockHistograms, lockOpHistograms, attachmentCreateToAddressHistograms, attachmentUpdateHistograms, anticipationUsedHistogram, statusUsedHistogram, workerCount, versionCount)
 
 	workerCount.Add(float64(workers))
 	versionCount.Add(1)
@@ -221,24 +243,25 @@ func NewController(netIfc kosclientv1a1.NetworkV1alpha1Interface,
 	lockInformer.AddIndexers(map[string]k8scache.IndexFunc{owningAttachmentIdxName: OwningAttachments})
 
 	return &IPAMController{
-		netIfc:                             netIfc,
-		subnetInformer:                     subnetInformer,
-		subnetLister:                       subnetLister,
-		netattInformer:                     netattInformer,
-		netattLister:                       netattLister,
-		lockInformer:                       lockInformer,
-		lockLister:                         lockLister,
-		eventRecorder:                      eventRecorder,
-		queue:                              queue,
-		workers:                            workers,
-		atts:                               make(map[k8stypes.NamespacedName]*NetworkAttachmentData),
-		addrCache:                          make(map[uint32]uint32set.UInt32SetChooser),
-		attachmentCreateToLockHistogram:    attachmentCreateToLockHistogram,
-		lockOpHistograms:                   lockOpHistograms,
-		attachmentCreateToAddressHistogram: attachmentCreateToAddressHistogram,
-		attachmentUpdateHistograms:         attachmentUpdateHistograms,
-		anticipationUsedHistogram:          anticipationUsedHistogram,
-		statusUsedHistogram:                statusUsedHistogram,
+		netIfc:                              netIfc,
+		subnetInformer:                      subnetInformer,
+		subnetLister:                        subnetLister,
+		netattInformer:                      netattInformer,
+		netattLister:                        netattLister,
+		lockInformer:                        lockInformer,
+		lockLister:                          lockLister,
+		eventRecorder:                       eventRecorder,
+		queue:                               queue,
+		workers:                             workers,
+		atts:                                make(map[k8stypes.NamespacedName]*NetworkAttachmentData),
+		addrCache:                           make(map[uint32]uint32set.UInt32SetChooser),
+		addressContentionHistogram:          addressContentionHistogram,
+		attachmentCreateToLockHistograms:    attachmentCreateToLockHistograms,
+		lockOpHistograms:                    lockOpHistograms,
+		attachmentCreateToAddressHistograms: attachmentCreateToAddressHistograms,
+		attachmentUpdateHistograms:          attachmentUpdateHistograms,
+		anticipationUsedHistogram:           anticipationUsedHistogram,
+		statusUsedHistogram:                 statusUsedHistogram,
 	}
 }
 
@@ -365,7 +388,7 @@ func (ctlr *IPAMController) OnLockNotify(ipl *netv1a1.IPLock, op string, exists 
 		changed = ctlr.ReleaseAddress(vni, addrU)
 	}
 	ownerNSNs, _ := OwningAttachments(ipl)
-	klog.V(4).Infof("At notify of %s of IPLock %s/%s, %s %s, changed=%v, numOwners=%d", op, ipl.Namespace, ipl.Name, addrOp, convert.Uint32ToIPv4(addrU), changed, len(ownerNSNs))
+	klog.V(4).Infof("At notify of %s of IPLock %s/%s, subnet=%s, %s address %s, changed=%v, numOwners=%d", op, ipl.Namespace, ipl.Name, ipl.Spec.SubnetName, addrOp, convert.Uint32ToIPv4(addrU), changed, len(ownerNSNs))
 	for _, ownerNSN := range ownerNSNs {
 		klog.V(5).Infof("Queuing NetworkAttachment %s due to notification about IPLock %s", ownerNSN, ipl.Name)
 		ctlr.queue.Add(k8stypes.NamespacedName{ipl.Namespace, strings.Split(ownerNSN, "/")[1]})
@@ -442,6 +465,9 @@ func (ctlr *IPAMController) processNetworkAttachment(ns, name string) error {
 		return nil
 	}
 	nadat := ctlr.getNetworkAttachmentData(ns, name, att != nil)
+	if nadat != nil && att != nil {
+		nadat.addressContention = nadat.addressContention || att.Status.AddressContention
+	}
 	subnetName, subnetUID, desiredVNI, desiredBaseU, desiredLastU, lockInStatus, lockForStatus, statusErrs, err, ok := ctlr.analyzeAndRelease(ns, name, att, nadat)
 	if err != nil || !ok {
 		return err
@@ -483,8 +509,10 @@ func (ctlr *IPAMController) processNetworkAttachment(ns, name string) error {
 		anticipationUsed = true
 		return nil
 	} else {
-		lockForStatus, ipForStatus, err = ctlr.pickAndLockAddress(ns, name, att, subnetName, desiredVNI, desiredBaseU, desiredLastU)
-		if isFullSubnetErr(err) && !fullSubnetMsgFound(att.Status.Errors.IPAM) {
+		lockForStatus, ipForStatus, err = ctlr.pickAndLockAddress(ns, name, att, subnetName, desiredVNI, desiredBaseU, desiredLastU, nadat.addressContention)
+		contentionNow := isFullSubnetErr(err)
+		nadat.addressContention = nadat.addressContention || contentionNow
+		if contentionNow && !fullSubnetMsgFound(att.Status.Errors.IPAM) {
 			fullSubnetErr = err
 			statusErrs = []string{fullSubnetStatusMsg}
 		} else if err != nil {
@@ -681,18 +709,23 @@ func (ctlr *IPAMController) deleteIPLockObject(parsed ParsedLock) error {
 	return nil
 }
 
-func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.NetworkAttachment, subnetName string, vni, subnetBaseU, subnetLastU uint32) (lockForStatus ParsedLock, ipForStatus gonet.IP, err error) {
+func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.NetworkAttachment, subnetName string, vni, subnetBaseU, subnetLastU uint32, prevAddressContention bool) (lockForStatus ParsedLock, ipForStatus gonet.IP, err error) {
 	addrMin, addrMax := subnetBaseU, subnetLastU
 	if addrMax-addrMin >= 4 {
 		addrMin, addrMax = subnetBaseU+2, subnetLastU-1
 	}
 	ipForStatusU, ok := ctlr.PickAddress(vni, addrMin, addrMax)
+	var contentionSgn float64
+	if !ok {
+		contentionSgn = 1
+	}
+	ctlr.addressContentionHistogram.Observe(contentionSgn)
 	if !ok {
 		err = fmt.Errorf("%s %s/%s (%x/%x--%x)", fullSubnetErrMsgPrefix, ns, subnetName, vni, subnetBaseU, subnetLastU)
 		return
 	}
 	ipForStatus = convert.Uint32ToIPv4(ipForStatusU)
-	klog.V(4).Infof("Picked address %s from %x/%x--%x for %s/%s", ipForStatus, vni, subnetBaseU, subnetLastU, ns, name)
+	klog.V(4).Infof("Picked address %s from %x/%x--%x for %s/%s in subnet %s, prevAddressContention=%t", ipForStatus, vni, subnetBaseU, subnetLastU, ns, name, subnetName, prevAddressContention)
 
 	// Now, try to lock that address
 
@@ -725,7 +758,7 @@ func (ctlr *IPAMController) pickAndLockAddress(ns, name string, att *netv1a1.Net
 			ctlr.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "AddressAssigned", "Assigned IPv4 address %s", ipForStatus)
 			klog.V(4).Infof("Locked IP address %s for %s/%s=%s, lockName=%s, lockUID=%s, Status.IPv4 was %q", ipForStatus, ns, name, string(att.UID), lockName, string(ipl2.UID), att.Status.IPv4)
 			if len(att.Status.IPv4) == 0 {
-				ctlr.attachmentCreateToLockHistogram.Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionSpec).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
+				ctlr.attachmentCreateToLockHistograms.With(prometheus.Labels{contentionLabel: strconv.FormatBool(prevAddressContention)}).Observe(ipl2.Writes.GetServerWriteTime(netv1a1.IPLockSectionSpec).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
 			}
 			break
 		} else if k8serrors.IsAlreadyExists(err) {
@@ -782,6 +815,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	}
 	att2 := att.DeepCopy()
 	att2.Status.Errors.IPAM = statusErrs
+	att2.Status.AddressContention = nadat.addressContention
 	att2.Status.LockUID = string(lockForStatus.UID)
 	att2.Status.AddressVNI = lockForStatus.VNI
 	if ipForStatus == nil {
@@ -796,7 +830,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	ctlr.attachmentUpdateHistograms.With(prometheus.Labels{"statusErr": FmtErrBool(len(statusErrs) > 0), "err": SummarizeErr(err)}).Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		deltaS := att3.Writes.GetServerWriteTime(netv1a1.NASectionAddr).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds()
-		ctlr.attachmentCreateToAddressHistogram.Observe(deltaS)
+		ctlr.attachmentCreateToAddressHistograms.With(prometheus.Labels{contentionLabel: strconv.FormatBool(nadat.addressContention)}).Observe(deltaS)
 		if len(statusErrs) > 0 {
 			klog.V(4).Infof("Recorded errors %v in status of %s/%s, subnetUID=%s, old ResourceVersion=%s, new ResourceVersion=%s, deltaS=%v", statusErrs, ns, name, subnetUID, att.ResourceVersion, att3.ResourceVersion, deltaS)
 		} else {

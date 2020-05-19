@@ -221,12 +221,17 @@ type NetworkAttachmentStatus struct {
 	// +optional
 	Errors NetworkAttachmentErrors
 
+	// AddressContention indicates whether the address assignment was
+	// delayed due to not enough addresses being available at first.
+	AddressContention bool
+
 	// LockUID is the UID of the IPLock object holding this attachment's
 	// IP address, or the empty string when there is no address.
 	// This field is a private detail of the implementation, not really
 	// part of the public API.
 	// +optional
 	LockUID string
+
 	// AddressVNI is the VNI associated with this attachment's
 	// IP address assignment, or the empty string when there is no address.
 	// +optional
