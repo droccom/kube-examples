@@ -221,6 +221,11 @@ type NetworkAttachmentStatus struct {
 	// +optional
 	Errors NetworkAttachmentErrors
 
+	// SubnetCreationTime is the API server write time of the SubnetSectionSpec
+	// of the subnet identified by NetworkAttachmentSpec.Subnet.
+	// +optional
+	SubnetCreationTime metav1.MicroTime
+
 	// AddressContention indicates whether the address assignment was
 	// delayed due to not enough addresses being available at first.
 	AddressContention bool

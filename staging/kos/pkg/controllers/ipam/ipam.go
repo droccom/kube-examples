@@ -836,6 +836,7 @@ func (ctlr *IPAMController) updateNAStatus(ns, name string, att *netv1a1.Network
 	}
 	att2 := att.DeepCopy()
 	att2.Status.Errors.IPAM = statusErrs
+	att2.Status.SubnetCreationTime = k8smetav1.NewMicroTime(subnetCreatTime)
 	att2.Status.AddressContention = nadat.addressContention
 	att2.Status.LockUID = string(lockForStatus.UID)
 	att2.Status.AddressVNI = lockForStatus.VNI

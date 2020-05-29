@@ -424,6 +424,7 @@ func autoConvert_v1alpha1_NetworkAttachmentStatus_To_network_NetworkAttachmentSt
 	if err := Convert_v1alpha1_NetworkAttachmentErrors_To_network_NetworkAttachmentErrors(&in.Errors, &out.Errors, s); err != nil {
 		return err
 	}
+	out.SubnetCreationTime = in.SubnetCreationTime
 	out.AddressContention = in.AddressContention
 	out.LockUID = in.LockUID
 	out.AddressVNI = in.AddressVNI
@@ -444,6 +445,7 @@ func autoConvert_network_NetworkAttachmentStatus_To_v1alpha1_NetworkAttachmentSt
 	if err := Convert_network_NetworkAttachmentErrors_To_v1alpha1_NetworkAttachmentErrors(&in.Errors, &out.Errors, s); err != nil {
 		return err
 	}
+	out.SubnetCreationTime = in.SubnetCreationTime
 	out.AddressContention = in.AddressContention
 	out.LockUID = in.LockUID
 	out.AddressVNI = in.AddressVNI

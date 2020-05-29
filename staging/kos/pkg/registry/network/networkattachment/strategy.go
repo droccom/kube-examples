@@ -172,6 +172,7 @@ func (networkattachmentStatusStrategy) PrepareForUpdate(ctx context.Context, obj
 		oldNA.Status.AddressVNI != newNA.Status.AddressVNI ||
 		oldNA.Status.IPv4 != newNA.Status.IPv4 ||
 		oldNA.Status.AddressContention != newNA.Status.AddressContention ||
+		!(&oldNA.Status.SubnetCreationTime).Equal(&newNA.Status.SubnetCreationTime) ||
 		!SliceOfStringEqual(oldNA.Status.Errors.IPAM, newNA.Status.Errors.IPAM) {
 		newNA.Writes = newNA.Writes.SetWrite(network.NASectionAddr, now)
 	}

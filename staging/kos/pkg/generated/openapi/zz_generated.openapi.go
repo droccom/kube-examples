@@ -2831,7 +2831,13 @@ func schema_pkg_apis_network_v1alpha1_NetworkAttachmentStatus(ref common.Referen
 							Ref: ref("k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.NetworkAttachmentErrors"),
 						},
 					},
-					"addressDelayed": {
+					"subnetCreationTime": {
+						SchemaProps: spec.SchemaProps{
+							Description: "SubnetCreationTime is the API server write time of the SubnetSectionSpec of the subnet identified by NetworkAttachmentSpec.Subnet.",
+							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime"),
+						},
+					},
+					"addressContention": {
 						SchemaProps: spec.SchemaProps{
 							Description: "AddressContention indicates whether the address assignment was delayed due to not enough addresses being available at first.",
 							Type:        []string{"boolean"},
@@ -2890,7 +2896,7 @@ func schema_pkg_apis_network_v1alpha1_NetworkAttachmentStatus(ref common.Referen
 			},
 		},
 		Dependencies: []string{
-			"k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.ExecReport", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.NetworkAttachmentErrors"},
+			"k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.ExecReport", "k8s.io/examples/staging/kos/pkg/apis/network/v1alpha1.NetworkAttachmentErrors"},
 	}
 }
 
