@@ -172,7 +172,7 @@ func (ifc *remoteNetworkInterface) String() string {
 	return fmt.Sprintf("{type=remote, VNI=%#x, guestIP=%s, guestMAC=%s, hostIP=%s}", ifc.VNI, ifc.GuestIP, ifc.GuestMAC, ifc.HostIP)
 }
 
-func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttachment) (ifc *localNetworkInterface, statusErrs sliceOfString, err error) {
+func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttachment, lastClientWrite string, lastClientWriteTime time.Time) (ifc *localNetworkInterface, statusErrs sliceOfString, err error) {
 	ifc = &localNetworkInterface{}
 	ifc.VNI = att.Status.AddressVNI
 	ifc.GuestIP = gonet.ParseIP(att.Status.IPv4)
@@ -190,14 +190,18 @@ func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttac
 	}
 	statusErrs = ca.launchCommand(parse.AttNSN(att), ifc.LocalNetIfc, att.Spec.PostCreateExec, ifc.postCreateExecReport.Store, "postCreate", true)
 	if att.Status.IfcName == "" {
-		ca.attachmentCreateToLocalIfcHistogram.Observe(tAfter.Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
+		ca.lastClientWriteToLocalIfcHistograms.
+			With(prometheus.Labels{
+				lastClientWriteLabel: lastClientWrite,
+			}).
+			Observe(tAfter.Sub(lastClientWriteTime).Seconds())
 	}
 	ca.localAttachmentsGauge.Inc()
 	ca.eventRecorder.Eventf(att, k8scorev1api.EventTypeNormal, "Implemented", "Created Linux network interface named %s with MAC address %s and IPv4 address %s", ifc.Name, ifc.GuestMAC, ifc.GuestIP)
 	return
 }
 
-func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time) (*remoteNetworkInterface, error) {
+func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAttachment, lastClientWrite string, lastClientWriteTime time.Time) (*remoteNetworkInterface, error) {
 	ifc := &remoteNetworkInterface{}
 	ifc.VNI = att.Status.AddressVNI
 	ifc.GuestIP = gonet.ParseIP(att.Status.IPv4)
@@ -209,20 +213,21 @@ func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAtta
 	tAfter := time.Now()
 
 	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "CreateRemoteIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
-	if err == nil {
-		naSpecWriteTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
-		naImplWriteTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionImpl)
-		if vnRelevanceTime.Before(naImplWriteTime) {
-			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(naSpecWriteTime).Seconds())
-			ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(naImplWriteTime).Seconds())
-		} else {
-			ca.attachmentCreateToRemoteIfcHistogram.Observe(tAfter.Sub(vnRelevanceTime).Seconds() + naImplWriteTime.Sub(naSpecWriteTime).Seconds())
-			ca.localImplToRemoteIfcHistogram.Observe(tAfter.Sub(vnRelevanceTime).Seconds())
-		}
-		ca.remoteAttachmentsGauge.Inc()
+
+	if err != nil {
+		return nil, err
 	}
 
-	return ifc, err
+	pl := prometheus.Labels{
+		lastClientWriteLabel: lastClientWrite,
+	}
+	ca.lastClientWriteToRemoteIfcHistograms.
+		With(pl).Observe(tAfter.Sub(lastClientWriteTime).Seconds())
+	ca.localImplToRemoteIfcHistograms.
+		With(pl).Observe(tAfter.Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionImpl)).Seconds())
+	ca.remoteAttachmentsGauge.Inc()
+
+	return ifc, nil
 }
 
 func (ca *ConnectionAgent) listPreExistingNetworkInterfaces() ([]networkInterface, error) {

@@ -92,6 +92,12 @@ const (
 	// The namespace and subsystem of the Prometheus metrics produced here
 	metricsNamespace = "kos"
 	metricsSubsystem = "agent"
+
+	lastClientWriteLabel              = "last_client_wr"
+	naLastClientWrite                 = "na"
+	subnetLastClientWrite             = "subnet"
+	firstLocalNALastClientWrite       = "1st_local_na"
+	firstLocalNASubnetLastClientWrite = "1st_local_na_subnet"
 )
 
 // stage1VirtualNetworkState is the first stage of the state associated with a
@@ -106,8 +112,22 @@ type stage1VirtualNetworkState struct {
 	// processing.
 	remoteAttsLister koslisterv1a1.NetworkAttachmentNamespaceLister
 
-	// The time at which the virtual network became relevant. Used to compute
-	// Promtheus latencies.
+	// The event that made the virtual network relevant. It is the last between
+	// the creation of the virtual network local attachment that was processed
+	// first (value "1st_local_na") and the creation of that attachment's subnet
+	// (value "1st_local_na_subnet"). Strictly speaking, the relevance trigger
+	// should be the last between the creation of the first local attachment to
+	// be created in the virtual network and the creation of that attachment's
+	// subnet, but the CA cannot know for sure the real relevance trigger.
+	// Practically, the chosen relevance trigger will often be the real one, or
+	// its relevance time will be close to that of the real one, so this should
+	// not an issue.
+	// Used to compute Prometheus latencies.
+	relevanceTrigger string
+
+	// The time at which the relevance trigger happened, that is, the estimate
+	// of the time at which virtual network became relevant. Used to compute
+	// Prometheus latencies.
 	relevanceTime time.Time
 }
 
@@ -251,20 +271,27 @@ type ConnectionAgent struct {
 	// slice to exec post-create or -delete.
 	allowedPrograms map[string]struct{}
 
-	// NetworkAttachment.CreationTimestamp to local network interface creation latency
-	attachmentCreateToLocalIfcHistogram prometheus.Histogram
+	// Seconds from creation of last API object (including the attachment API
+	// object itself) needed for an attachment to get a local network interface
+	// to creation of the local network interface.
+	lastClientWriteToLocalIfcHistograms *prometheus.HistogramVec
 
-	// NetworkAttachment.CreationTimestamp to remote network interface creation latency
-	attachmentCreateToRemoteIfcHistogram prometheus.Histogram
+	// Seconds from creation of last API object (including the attachment API
+	// object itself) needed for an attachment to get a remote network interface
+	// to creation of the remote network interface.
+	lastClientWriteToRemoteIfcHistograms *prometheus.HistogramVec
 
-	// NASectionImpl to remote network interface creation latency
-	localImplToRemoteIfcHistogram prometheus.Histogram
+	// Seconds from attachment NASectionImpl to creation of remote network
+	// interface.
+	localImplToRemoteIfcHistograms *prometheus.HistogramVec
 
 	// Durations of calls on network fabric
 	fabricLatencyHistograms *prometheus.HistogramVec
 
-	// NetworkAttachment.CreationTimestamp to return from status update
-	attachmentCreateToStatusHistogram prometheus.Histogram
+	// Seconds from creation of last API object (including the attachment API
+	// object itself) needed for an attachment to get a local network interface
+	// to attachment's status update.
+	lastClientWriteToStatusHistograms *prometheus.HistogramVec
 
 	// round trip time for happy status update
 	attachmentStatusHistograms *prometheus.HistogramVec
@@ -287,25 +314,27 @@ func New(node string,
 	netFabric netfabric.InterfaceManager,
 	allowedPrograms map[string]struct{}) *ConnectionAgent {
 
-	attachmentCreateToLocalIfcHistogram := prometheus.NewHistogram(
+	lastClientWriteToLocalIfcHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
-			Name:        "attachment_create_to_local_ifc_latency_seconds",
-			Help:        "Seconds from attachment CreationTimestamp to finished creating local interface",
+			Name:        "last_client_write_to_local_ifc_latency_seconds",
+			Help:        "Seconds from creation of last API object (including the attachment API object itself) needed for an attachment to get a local network interface to creation of the local network interface",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
-		})
-	attachmentCreateToRemoteIfcHistogram := prometheus.NewHistogram(
+		},
+		[]string{lastClientWriteLabel})
+	lastClientWriteToRemoteIfcHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
-			Name:        "attachment_create_to_remote_ifc_latency_seconds",
-			Help:        "Seconds from attachment CreationTimestamp to finished creating remote interface",
+			Name:        "last_client_write_to_remote_ifc_latency_seconds",
+			Help:        "Seconds from creation of last API object (including the attachment API object itself) needed for an attachment to get a remote network interface to creation of the remote network interface",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
-		})
-	localImplToRemoteIfcHistogram := prometheus.NewHistogram(
+		},
+		[]string{lastClientWriteLabel})
+	localImplToRemoteIfcHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
@@ -313,7 +342,8 @@ func New(node string,
 			Help:        "Seconds from attachment NASectionImpl Timestamp to finished creating remote interface",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
-		})
+		},
+		[]string{lastClientWriteLabel})
 	fabricLatencyHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
@@ -324,15 +354,16 @@ func New(node string,
 			ConstLabels: map[string]string{"node": node},
 		},
 		[]string{"op", "err"})
-	attachmentCreateToStatusHistogram := prometheus.NewHistogram(
+	lastClientWriteToStatusHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
 			Subsystem:   metricsSubsystem,
-			Name:        "attachment_create_to_status_latency_seconds",
-			Help:        "Seconds from attachment CreationTimestamp to return from successful status update",
+			Name:        "last_client_write_to_status_update_latency_seconds",
+			Help:        "Seconds from creation of last API object (including the attachment API object itself) needed for an attachment to get a local network interface to attachment's status update",
 			Buckets:     []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256},
 			ConstLabels: map[string]string{"node": node},
-		})
+		},
+		[]string{lastClientWriteLabel})
 	attachmentStatusHistograms := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace:   metricsNamespace,
@@ -403,7 +434,7 @@ func New(node string,
 			Help:        "Version indicator",
 			ConstLabels: map[string]string{"git_commit": version.GitCommit},
 		})
-	prometheus.MustRegister(attachmentCreateToLocalIfcHistogram, attachmentCreateToRemoteIfcHistogram, localImplToRemoteIfcHistogram, fabricLatencyHistograms, attachmentCreateToStatusHistogram, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount, versionCount)
+	prometheus.MustRegister(lastClientWriteToLocalIfcHistograms, lastClientWriteToRemoteIfcHistograms, localImplToRemoteIfcHistograms, fabricLatencyHistograms, lastClientWriteToStatusHistograms, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount, versionCount)
 
 	fabricNameCounts.With(prometheus.Labels{"fabric": netFabric.Name()}).Inc()
 	workerCount.Add(float64(workers))
@@ -433,11 +464,11 @@ func New(node string,
 		},
 		attToNetworkInterface:                make(map[k8stypes.NamespacedName]networkInterface),
 		allowedPrograms:                      allowedPrograms,
-		attachmentCreateToLocalIfcHistogram:  attachmentCreateToLocalIfcHistogram,
-		attachmentCreateToRemoteIfcHistogram: attachmentCreateToRemoteIfcHistogram,
-		localImplToRemoteIfcHistogram:        localImplToRemoteIfcHistogram,
+		lastClientWriteToLocalIfcHistograms:  lastClientWriteToLocalIfcHistograms,
+		lastClientWriteToRemoteIfcHistograms: lastClientWriteToRemoteIfcHistograms,
+		localImplToRemoteIfcHistograms:       localImplToRemoteIfcHistograms,
 		fabricLatencyHistograms:              fabricLatencyHistograms,
-		attachmentCreateToStatusHistogram:    attachmentCreateToStatusHistogram,
+		lastClientWriteToStatusHistograms:    lastClientWriteToStatusHistograms,
 		attachmentStatusHistograms:           attachmentStatusHistograms,
 		localAttachmentsGauge:                localAttachmentsGauge,
 		remoteAttachmentsGauge:               remoteAttachmentsGauge,
@@ -580,7 +611,11 @@ func (ca *ConnectionAgent) startRemoteAttsInformers() error {
 		// arrive causing its deletion and the attachments which were not added
 		// (such as `att`) will be processed and added to a new S2VNState with
 		// the most recent namespace.
-		ca.addLocalAttToS2VNState(parse.AttNSN(att), att.Status.AddressVNI)
+		// TODO: Test latest changes and add corresponding Grafana dashboards.
+		// TODO: Fix vn relevance time setting when pre-existing network
+		// interfaces are found.
+		// TODO: Track vn relevance delay.
+		ca.addLocalAttToS2VNState(att)
 		s2VNState := ca.s2VirtNetsState.vniToVNState[att.Status.AddressVNI]
 		if !s2VNState.remoteAttsInformer.HasSynced() && !k8scache.WaitForCacheSync(s2VNState.remoteAttsInformerStopCh, s2VNState.remoteAttsInformer.HasSynced) {
 			return fmt.Errorf("failed to sync remote attachments informer for VNI %#x", att.Status.AddressVNI)
@@ -687,8 +722,30 @@ func (ca *ConnectionAgent) processQueueItem(attNSN k8stypes.NamespacedName, qlen
 	ca.queue.Forget(attNSN)
 }
 
+func (ca *ConnectionAgent) getLastClientWriteInfo(att *netv1a1.NetworkAttachment,
+	vnRelevanceTrigger string,
+	vnRelevanceTime time.Time) (lastClientWr string, lastClientWrTime time.Time) {
+
+	if att == nil {
+		return
+	}
+
+	lastClientWr = naLastClientWrite
+	lastClientWrTime = att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
+	if att.Status.SubnetCreationTime.After(lastClientWrTime) {
+		lastClientWr = subnetLastClientWrite
+		lastClientWrTime = att.Status.SubnetCreationTime.Time
+	}
+	if att.Spec.Node != ca.node && vnRelevanceTime.After(lastClientWrTime) {
+		lastClientWr = vnRelevanceTrigger
+		lastClientWrTime = vnRelevanceTime
+	}
+
+	return
+}
+
 func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedName) error {
-	att, vnRelevanceTime, haltProcessing := ca.getNetworkAttachment(attNSN)
+	att, vnRelevanceTrigger, vnRelevanceTime, haltProcessing := ca.getNetworkAttachment(attNSN)
 	if haltProcessing {
 		return nil
 	}
@@ -699,8 +756,10 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 	}
 	klog.V(3).Infof("Synced stage2VNState for attachment %s.", attNSN)
 
+	lastClientWrite, lastClientWriteTime := ca.getLastClientWriteInfo(att, vnRelevanceTrigger, vnRelevanceTime)
+
 	// Create/update/delete the network interface of the NetworkAttachment.
-	ifc, statusErrs, err := ca.syncNetworkInterface(attNSN, att, vnRelevanceTime)
+	ifc, statusErrs, err := ca.syncNetworkInterface(attNSN, att, lastClientWrite, lastClientWriteTime)
 	if err != nil {
 		return err
 	}
@@ -720,7 +779,7 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 		return nil
 	}
 
-	return ca.updateLocalAttachmentStatus(att, ifcMAC, localIfc.Name, statusErrs, ifcPCER)
+	return ca.updateLocalAttachmentStatus(att, lastClientWriteTime, lastClientWrite, ifcMAC, localIfc.Name, statusErrs, ifcPCER)
 }
 
 // getNetworkAttachment attempts to determine the univocal version of the
@@ -731,10 +790,10 @@ func (ca *ConnectionAgent) processNetworkAttachment(attNSN k8stypes.NamespacedNa
 // The third return argument tells clients whether they should stop working on
 // the NetworkAttachment. It is set to true if an unexpected error occurs or if
 // the current state of the NetworkAttachment cannot be unambiguously determined.
-func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time, haltProcessing bool) {
+func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) (att *netv1a1.NetworkAttachment, vnRelevanceTrigger string, vnRelevanceTime time.Time, haltProcessing bool) {
 	// Get the lister backed by the Informer's cache where the NetworkAttachment
 	// was seen. There could more than one.
-	attLister, vnRelevanceTime, moreThanOneLister := ca.getLister(attNSN)
+	attLister, vnRelevanceTrigger, vnRelevanceTime, moreThanOneLister := ca.getLister(attNSN)
 
 	if moreThanOneLister {
 		// If more than one lister was found the NetworkAttachment was seen in
@@ -763,7 +822,7 @@ func (ca *ConnectionAgent) getNetworkAttachment(attNSN k8stypes.NamespacedName) 
 	return
 }
 
-func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, vnRelevanceTime time.Time, moreThanOneVNI bool) {
+func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslisterv1a1.NetworkAttachmentNamespaceLister, vnRelevanceTrigger string, vnRelevanceTime time.Time, moreThanOneVNI bool) {
 	ca.s1VirtNetsState.RLock()
 	defer ca.s1VirtNetsState.RUnlock()
 
@@ -787,6 +846,7 @@ func (ca *ConnectionAgent) getLister(att k8stypes.NamespacedName) (lister koslis
 	} else {
 		attStage1VNState := ca.s1VirtNetsState.vniToVNState[attVNI]
 		lister = attStage1VNState.remoteAttsLister
+		vnRelevanceTrigger = attStage1VNState.relevanceTrigger
 		vnRelevanceTime = attStage1VNState.relevanceTime
 	}
 	return
@@ -807,7 +867,7 @@ func (ca *ConnectionAgent) syncS2VNState(attNSN k8stypes.NamespacedName, att *ne
 	if att != nil && ca.node == att.Spec.Node && (!attOldStage2VNIFound || attOldStage2VNI != att.Status.AddressVNI) {
 		// The NetworkAttachment is local and is not in the
 		// stage2VirtualNetworkState of its virtual network yet: add it.
-		return ca.addLocalAttToS2VNState(attNSN, att.Status.AddressVNI)
+		return ca.addLocalAttToS2VNState(att)
 	}
 
 	return nil
@@ -817,13 +877,21 @@ func (ca *ConnectionAgent) syncS2VNState(attNSN k8stypes.NamespacedName, att *ne
 // stage2VirtualNetworkState and inits such state if the NetworkAttachment is
 // the first local one (this entails initializing the stage1VirtualNetworkState
 // as well).
-func (ca *ConnectionAgent) addLocalAttToS2VNState(att k8stypes.NamespacedName, vni uint32) error {
+func (ca *ConnectionAgent) addLocalAttToS2VNState(att *netv1a1.NetworkAttachment) error {
+	attNSN := parse.AttNSN(att)
+	vni := att.Status.AddressVNI
 	attS2VNState := ca.s2VirtNetsState.vniToVNState[vni]
 	if attS2VNState == nil {
 		// The NetworkAttachment is the first local one for its virtual network,
 		// which has therefore just become relevant.
-		attS2VNState = ca.initStage2VNState(vni, att.Namespace)
-		klog.V(2).Infof("Virtual Network with VNI %d became relevant because of creation of first local attachment %s. Its state has been initialized.", vni, att)
+		vnRelevanceTrigger := firstLocalNALastClientWrite
+		vnRelevanceTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
+		if att.Status.SubnetCreationTime.After(vnRelevanceTime) {
+			vnRelevanceTrigger = firstLocalNASubnetLastClientWrite
+			vnRelevanceTime = att.Status.SubnetCreationTime.Time
+		}
+		attS2VNState = ca.initStage2VNState(vni, att.Namespace, vnRelevanceTrigger, vnRelevanceTime)
+		klog.V(2).Infof("Virtual Network with VNI %d became relevant because of creation of first local attachment %s. Its state has been initialized.", vni, attNSN)
 	}
 
 	if attS2VNState.namespace != att.Namespace {
@@ -837,7 +905,7 @@ func (ca *ConnectionAgent) addLocalAttToS2VNState(att k8stypes.NamespacedName, v
 		return fmt.Errorf("attachment is local but could not be added to stage2VirtualNetworkState because namespace found there (%s) does not match the attachment's", attS2VNState.namespace)
 	}
 
-	ca.s2VirtNetsState.localAttToStage2VNI[att] = vni
+	ca.s2VirtNetsState.localAttToStage2VNI[attNSN] = vni
 	attS2VNState.localAtts[att.Name] = struct{}{}
 	return nil
 }
@@ -865,7 +933,7 @@ func (ca *ConnectionAgent) removeLocalAttFromS2VNState(att k8stypes.NamespacedNa
 // initStage2VNState configures and starts the Informer for remote
 // NetworkAttachments in the virtual network identified by `vni`.
 // It also initializes the stage1VirtualNetworkState corresponding to `vni`.
-func (ca *ConnectionAgent) initStage2VNState(vni uint32, namespace string) *stage2VirtualNetworkState {
+func (ca *ConnectionAgent) initStage2VNState(vni uint32, namespace, relevanceTrigger string, relevanceTime time.Time) *stage2VirtualNetworkState {
 	remAttsInformer, remAttsLister := ca.newInformerAndLister(resyncPeriod, namespace, ca.remoteAttSelector(vni), attHostIPAndIP)
 	newStage2VNState := &stage2VirtualNetworkState{
 		namespace:                namespace,
@@ -875,7 +943,7 @@ func (ca *ConnectionAgent) initStage2VNState(vni uint32, namespace string) *stag
 	}
 	ca.s2VirtNetsState.vniToVNState[vni] = newStage2VNState
 
-	s1VNS := ca.initStage1VNState(vni, remAttsLister.NetworkAttachments(namespace))
+	s1VNS := ca.initStage1VNState(vni, remAttsLister.NetworkAttachments(namespace), relevanceTrigger, relevanceTime)
 
 	remAttsInformer.AddEventHandler(ca.newRemoteAttsEventHandler(s1VNS))
 	go remAttsInformer.Run(mergeStopChannels(ca.stopCh, newStage2VNState.remoteAttsInformerStopCh))
@@ -883,14 +951,15 @@ func (ca *ConnectionAgent) initStage2VNState(vni uint32, namespace string) *stag
 	return newStage2VNState
 }
 
-func (ca *ConnectionAgent) initStage1VNState(vni uint32, remAttsLister koslisterv1a1.NetworkAttachmentNamespaceLister) *stage1VirtualNetworkState {
+func (ca *ConnectionAgent) initStage1VNState(vni uint32, remAttsLister koslisterv1a1.NetworkAttachmentNamespaceLister, relevanceTrigger string, relevanceTime time.Time) *stage1VirtualNetworkState {
 	ca.s1VirtNetsState.Lock()
 	defer ca.s1VirtNetsState.Unlock()
 
 	s1VNS := &stage1VirtualNetworkState{
 		remoteAtts:       make(map[string]struct{}),
 		remoteAttsLister: remAttsLister,
-		relevanceTime:    time.Now()}
+		relevanceTrigger: relevanceTrigger,
+		relevanceTime:    relevanceTime}
 	ca.s1VirtNetsState.vniToVNState[vni] = s1VNS
 	return s1VNS
 }
@@ -1004,7 +1073,7 @@ func (ca *ConnectionAgent) updateS1VNState(att k8stypes.NamespacedName, vni uint
 	return
 }
 
-func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, att *netv1a1.NetworkAttachment, vnRelevanceTime time.Time) (ifc networkInterface, statusErrs sliceOfString, err error) {
+func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, att *netv1a1.NetworkAttachment, lastClientWrite string, lastClientWriteTime time.Time) (ifc networkInterface, statusErrs sliceOfString, err error) {
 	oldIfc, oldIfcFound := ca.getNetworkInterface(attNSN)
 	oldIfcCanBeUsed := oldIfcFound && oldIfc.canBeOwnedBy(att, ca.node)
 
@@ -1031,9 +1100,9 @@ func (ca *ConnectionAgent) syncNetworkInterface(attNSN k8stypes.NamespacedName, 
 	}
 
 	if att.Spec.Node == ca.node {
-		ifc, statusErrs, err = ca.createLocalNetworkInterface(att)
+		ifc, statusErrs, err = ca.createLocalNetworkInterface(att, lastClientWrite, lastClientWriteTime)
 	} else {
-		ifc, err = ca.createRemoteNetworkInterface(att, vnRelevanceTime)
+		ifc, err = ca.createRemoteNetworkInterface(att, lastClientWrite, lastClientWriteTime)
 	}
 	if err == nil {
 		ca.assignNetworkInterface(attNSN, ifc)
@@ -1051,7 +1120,12 @@ func (ca *ConnectionAgent) localAttachmentIsUpToDate(att *netv1a1.NetworkAttachm
 		postCreateER.Equiv(att.Status.PostCreateExecReport)
 }
 
-func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttachment, macAddr, ifcName string, statusErrs sliceOfString, pcer *netv1a1.ExecReport) error {
+func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttachment,
+	lastClientWriteTime time.Time,
+	lastClientWrite, macAddr, ifcName string,
+	statusErrs sliceOfString,
+	pcer *netv1a1.ExecReport) error {
+
 	test, _ := ca.localAttsLister.NetworkAttachments(att.Namespace).Get(att.Name)
 	if test == nil { // It has been deleted, don't bother
 		klog.V(3).Infof("Did not attempt to update deleted NetworkAttachment %s's status: oldRV=%s, ipv4=%s, macAddress=%q, ifcName=%q, statusErrs=%#+v, PostCreateExecReport=%#+v",
@@ -1088,7 +1162,11 @@ func (ca *ConnectionAgent) updateLocalAttachmentStatus(att *netv1a1.NetworkAttac
 			updatedAtt.Status.Errors.Host,
 			updatedAtt.Status.PostCreateExecReport)
 		if att.Status.HostIP == "" {
-			ca.attachmentCreateToStatusHistogram.Observe(updatedAtt.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)).Seconds())
+			ca.lastClientWriteToStatusHistograms.
+				With(prometheus.Labels{
+					lastClientWriteLabel: lastClientWrite,
+				}).
+				Observe(updatedAtt.Writes.GetServerWriteTime(netv1a1.NASectionImpl).Sub(lastClientWriteTime).Seconds())
 		}
 		return nil
 	}
