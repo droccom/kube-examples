@@ -118,7 +118,8 @@ type stage1VirtualNetworkState struct {
 	// (value "1st_local_na_subnet"). Strictly speaking, the relevance trigger
 	// should be the last between the creation of the first local attachment to
 	// be created in the virtual network and the creation of that attachment's
-	// subnet, but the CA cannot know for sure the real relevance trigger.
+	// subnet, but the CA cannot know for sure the real relevance trigger
+	// because notifications on attachments are not delivered in order.
 	// Practically, the chosen relevance trigger will often be the real one, or
 	// its relevance time will be close to that of the real one, so this should
 	// not an issue.
@@ -126,9 +127,14 @@ type stage1VirtualNetworkState struct {
 	relevanceTrigger string
 
 	// The time at which the relevance trigger happened, that is, the estimate
-	// of the time at which virtual network became relevant. Used to compute
-	// Prometheus latencies.
+	// of the time at which virtual network became relevant.
+	// Used to compute Prometheus latencies.
 	relevanceTime time.Time
+
+	// The value of `relevanceTime` might be later than the real relevance time,
+	// relevanceDelaySecs tracks the delay in seconds when the CA learns about
+	// it.
+	relevanceDelaySecs float64
 }
 
 // stage1VirtualNetworksState is the first stage of the state associated with
@@ -301,6 +307,10 @@ type ConnectionAgent struct {
 
 	attachmentExecDurationHistograms *prometheus.HistogramVec
 	attachmentExecStatusCounts       *prometheus.CounterVec
+
+	// Sum over all relevant virtual networks of the delays of their recorded
+	// relevance time.
+	vnRelevanceAggregateDelaySecs prometheus.Gauge
 }
 
 // New returns a deactivated instance of a ConnectionAgent (neither the workers
@@ -409,6 +419,14 @@ func New(node string,
 			ConstLabels: map[string]string{"node": node},
 		},
 		[]string{"what", "exitStatus", "lgComplaints"})
+	vnRelevanceAggregateDelaySecs := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace:   metricsNamespace,
+			Subsystem:   metricsSubsystem,
+			Name:        "vn_relevance_aggregate_delay_seconds",
+			Help:        "Sum over all relevant virtual networks of the delays of their recorded relevance times",
+			ConstLabels: map[string]string{"node": node},
+		})
 	fabricNameCounts := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace:   metricsNamespace,
@@ -434,7 +452,7 @@ func New(node string,
 			Help:        "Version indicator",
 			ConstLabels: map[string]string{"git_commit": version.GitCommit},
 		})
-	prometheus.MustRegister(lastClientWriteToLocalIfcHistograms, lastClientWriteToRemoteIfcHistograms, localImplToRemoteIfcHistograms, fabricLatencyHistograms, lastClientWriteToStatusHistograms, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, fabricNameCounts, workerCount, versionCount)
+	prometheus.MustRegister(lastClientWriteToLocalIfcHistograms, lastClientWriteToRemoteIfcHistograms, localImplToRemoteIfcHistograms, fabricLatencyHistograms, lastClientWriteToStatusHistograms, attachmentStatusHistograms, localAttachmentsGauge, remoteAttachmentsGauge, attachmentExecDurationHistograms, attachmentExecStatusCounts, vnRelevanceAggregateDelaySecs, fabricNameCounts, workerCount, versionCount)
 
 	fabricNameCounts.With(prometheus.Labels{"fabric": netFabric.Name()}).Inc()
 	workerCount.Add(float64(workers))
@@ -474,6 +492,7 @@ func New(node string,
 		remoteAttachmentsGauge:               remoteAttachmentsGauge,
 		attachmentExecDurationHistograms:     attachmentExecDurationHistograms,
 		attachmentExecStatusCounts:           attachmentExecStatusCounts,
+		vnRelevanceAggregateDelaySecs:        vnRelevanceAggregateDelaySecs,
 	}
 }
 
@@ -611,11 +630,7 @@ func (ca *ConnectionAgent) startRemoteAttsInformers() error {
 		// arrive causing its deletion and the attachments which were not added
 		// (such as `att`) will be processed and added to a new S2VNState with
 		// the most recent namespace.
-		// TODO: Test latest changes and add corresponding Grafana dashboards.
-		// TODO: Fix vn relevance time setting when pre-existing network
-		// interfaces are found.
-		// TODO: Track vn relevance delay.
-		ca.addLocalAttToS2VNState(att)
+		ca.addLocalAttToS2VNState(att, true)
 		s2VNState := ca.s2VirtNetsState.vniToVNState[att.Status.AddressVNI]
 		if !s2VNState.remoteAttsInformer.HasSynced() && !k8scache.WaitForCacheSync(s2VNState.remoteAttsInformerStopCh, s2VNState.remoteAttsInformer.HasSynced) {
 			return fmt.Errorf("failed to sync remote attachments informer for VNI %#x", att.Status.AddressVNI)
@@ -867,7 +882,7 @@ func (ca *ConnectionAgent) syncS2VNState(attNSN k8stypes.NamespacedName, att *ne
 	if att != nil && ca.node == att.Spec.Node && (!attOldStage2VNIFound || attOldStage2VNI != att.Status.AddressVNI) {
 		// The NetworkAttachment is local and is not in the
 		// stage2VirtualNetworkState of its virtual network yet: add it.
-		return ca.addLocalAttToS2VNState(att)
+		return ca.addLocalAttToS2VNState(att, false)
 	}
 
 	return nil
@@ -877,19 +892,20 @@ func (ca *ConnectionAgent) syncS2VNState(attNSN k8stypes.NamespacedName, att *ne
 // stage2VirtualNetworkState and inits such state if the NetworkAttachment is
 // the first local one (this entails initializing the stage1VirtualNetworkState
 // as well).
-func (ca *ConnectionAgent) addLocalAttToS2VNState(att *netv1a1.NetworkAttachment) error {
+func (ca *ConnectionAgent) addLocalAttToS2VNState(att *netv1a1.NetworkAttachment, initialSync bool) error {
+	vnRelevanceTrigger := firstLocalNALastClientWrite
+	vnRelevanceTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
+	if att.Status.SubnetCreationTime.After(vnRelevanceTime) {
+		vnRelevanceTrigger = firstLocalNASubnetLastClientWrite
+		vnRelevanceTime = att.Status.SubnetCreationTime.Time
+	}
+
 	attNSN := parse.AttNSN(att)
 	vni := att.Status.AddressVNI
-	attS2VNState := ca.s2VirtNetsState.vniToVNState[vni]
-	if attS2VNState == nil {
+	attS2VNState, foundS2VNState := ca.s2VirtNetsState.vniToVNState[vni]
+	if !foundS2VNState {
 		// The NetworkAttachment is the first local one for its virtual network,
 		// which has therefore just become relevant.
-		vnRelevanceTrigger := firstLocalNALastClientWrite
-		vnRelevanceTime := att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionSpec)
-		if att.Status.SubnetCreationTime.After(vnRelevanceTime) {
-			vnRelevanceTrigger = firstLocalNASubnetLastClientWrite
-			vnRelevanceTime = att.Status.SubnetCreationTime.Time
-		}
 		attS2VNState = ca.initStage2VNState(vni, att.Namespace, vnRelevanceTrigger, vnRelevanceTime)
 		klog.V(2).Infof("Virtual Network with VNI %d became relevant because of creation of first local attachment %s. Its state has been initialized.", vni, attNSN)
 	}
@@ -903,6 +919,10 @@ func (ca *ConnectionAgent) addLocalAttToS2VNState(att *netv1a1.NetworkAttachment
 		// Return an error to trigger delayed reprocessing, when (hopefully)
 		// all the notifications have been processed.
 		return fmt.Errorf("attachment is local but could not be added to stage2VirtualNetworkState because namespace found there (%s) does not match the attachment's", attS2VNState.namespace)
+	}
+
+	if foundS2VNState {
+		ca.touchStage1VNState(attNSN, vni, vnRelevanceTrigger, vnRelevanceTime, initialSync)
 	}
 
 	ca.s2VirtNetsState.localAttToStage2VNI[attNSN] = vni
@@ -979,6 +999,41 @@ func (ca *ConnectionAgent) clearStage1VNState(vni uint32, namespace string) {
 			delete(ca.s1VirtNetsState.attToVNIs, aRemoteAttNSN)
 		}
 		ca.queue.Add(aRemoteAttNSN)
+	}
+	ca.vnRelevanceAggregateDelaySecs.Sub(stage1VNState.relevanceDelaySecs)
+}
+
+const vnRelevanceDelayGraceSecs = 0.01
+
+func (ca *ConnectionAgent) touchStage1VNState(att k8stypes.NamespacedName, vni uint32, newRelevanceTrigger string, newRelevanceTime time.Time, pickEarlyTime bool) {
+	ca.s1VirtNetsState.Lock()
+	defer ca.s1VirtNetsState.Unlock()
+
+	s1VNS := ca.s1VirtNetsState.vniToVNState[vni]
+
+	if !newRelevanceTime.Before(s1VNS.relevanceTime) {
+		return
+	}
+
+	if pickEarlyTime {
+		s1VNS.relevanceTime = newRelevanceTime
+		s1VNS.relevanceTrigger = newRelevanceTrigger
+		return
+	}
+
+	dt := s1VNS.relevanceTime.Sub(newRelevanceTime).Seconds()
+	if dt > vnRelevanceDelayGraceSecs && dt > s1VNS.relevanceDelaySecs {
+		// Make some noise.
+		klog.Warningf("vni %d: recorded relevance trigger and time are (%s, %s), but notification on local NetworkAttachment %s makes real relevance trigger and time (%s, %s) (%f secs earlier).",
+			vni,
+			s1VNS.relevanceTrigger,
+			s1VNS.relevanceTime,
+			att,
+			newRelevanceTrigger,
+			newRelevanceTime,
+			dt)
+		ca.vnRelevanceAggregateDelaySecs.Add(dt - s1VNS.relevanceDelaySecs)
+		s1VNS.relevanceDelaySecs = dt
 	}
 }
 
