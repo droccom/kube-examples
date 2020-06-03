@@ -23,8 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	k8scorev1api "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
@@ -97,7 +95,9 @@ func (ifc *localNetworkInterface) delete(owner k8stypes.NamespacedName, ca *Conn
 	err := ca.netFabric.DeleteLocalIfc(ifc.LocalNetIfc)
 	tAfter := time.Now()
 
-	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "DeleteLocalIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ca.fabricLatencyHistograms.
+		WithLabelValues("DeleteLocalIfc", formatErrVal(err != nil)).
+		Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		ca.localAttachmentsGauge.Dec()
 		ca.launchCommand(owner, ifc.LocalNetIfc, ifc.postDeleteExec, nil, "postDelete", true)
@@ -107,7 +107,7 @@ func (ifc *localNetworkInterface) delete(owner k8stypes.NamespacedName, ca *Conn
 }
 
 func (ifc *localNetworkInterface) String() string {
-	return fmt.Sprintf("{type=local, VNI=%#x, guestIP=%s, guestMAC=%s, name=%s}", ifc.VNI, ifc.GuestIP, ifc.GuestMAC, ifc.Name)
+	return fmt.Sprintf("{type=local, VNI=%06x, guestIP=%s, guestMAC=%s, name=%s}", ifc.VNI, ifc.GuestIP, ifc.GuestMAC, ifc.Name)
 }
 
 type remoteNetworkInterface struct {
@@ -160,7 +160,9 @@ func (ifc *remoteNetworkInterface) delete(_ k8stypes.NamespacedName, ca *Connect
 	err := ca.netFabric.DeleteRemoteIfc(ifc.RemoteNetIfc)
 	tAfter := time.Now()
 
-	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "DeleteRemoteIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ca.fabricLatencyHistograms.
+		WithLabelValues("DeleteRemoteIfc", formatErrVal(err != nil)).
+		Observe(tAfter.Sub(tBefore).Seconds())
 	if err == nil {
 		ca.remoteAttachmentsGauge.Dec()
 	}
@@ -169,7 +171,7 @@ func (ifc *remoteNetworkInterface) delete(_ k8stypes.NamespacedName, ca *Connect
 }
 
 func (ifc *remoteNetworkInterface) String() string {
-	return fmt.Sprintf("{type=remote, VNI=%#x, guestIP=%s, guestMAC=%s, hostIP=%s}", ifc.VNI, ifc.GuestIP, ifc.GuestMAC, ifc.HostIP)
+	return fmt.Sprintf("{type=remote, VNI=%06x, guestIP=%s, guestMAC=%s, hostIP=%s}", ifc.VNI, ifc.GuestIP, ifc.GuestMAC, ifc.HostIP)
 }
 
 func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttachment, lastClientWrite string, lastClientWriteTime time.Time) (ifc *localNetworkInterface, statusErrs sliceOfString, err error) {
@@ -184,16 +186,16 @@ func (ca *ConnectionAgent) createLocalNetworkInterface(att *netv1a1.NetworkAttac
 	err = ca.netFabric.CreateLocalIfc(ifc.LocalNetIfc)
 	tAfter := time.Now()
 
-	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "CreateLocalIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ca.fabricLatencyHistograms.
+		WithLabelValues("CreateLocalIfc", formatErrVal(err != nil)).
+		Observe(tAfter.Sub(tBefore).Seconds())
 	if err != nil {
 		return
 	}
 	statusErrs = ca.launchCommand(parse.AttNSN(att), ifc.LocalNetIfc, att.Spec.PostCreateExec, ifc.postCreateExecReport.Store, "postCreate", true)
 	if att.Status.IfcName == "" {
 		ca.lastClientWriteToLocalIfcHistograms.
-			With(prometheus.Labels{
-				lastClientWriteLabel: lastClientWrite,
-			}).
+			WithLabelValues(lastClientWrite).
 			Observe(tAfter.Sub(lastClientWriteTime).Seconds())
 	}
 	ca.localAttachmentsGauge.Inc()
@@ -212,19 +214,22 @@ func (ca *ConnectionAgent) createRemoteNetworkInterface(att *netv1a1.NetworkAtta
 	err := ca.netFabric.CreateRemoteIfc(ifc.RemoteNetIfc)
 	tAfter := time.Now()
 
-	ca.fabricLatencyHistograms.With(prometheus.Labels{"op": "CreateRemoteIfc", "err": formatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	ca.fabricLatencyHistograms.
+		WithLabelValues("CreateRemoteIfc", formatErrVal(err != nil)).
+		Observe(tAfter.Sub(tBefore).Seconds())
 
 	if err != nil {
 		return nil, err
 	}
 
-	pl := prometheus.Labels{
-		lastClientWriteLabel: lastClientWrite,
-	}
 	ca.lastClientWriteToRemoteIfcHistograms.
-		With(pl).Observe(tAfter.Sub(lastClientWriteTime).Seconds())
-	ca.localImplToRemoteIfcHistograms.
-		With(pl).Observe(tAfter.Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionImpl)).Seconds())
+		WithLabelValues(lastClientWrite).
+		Observe(tAfter.Sub(lastClientWriteTime).Seconds())
+	if lastClientWrite == naLastClientWrite || lastClientWrite == subnetLastClientWrite {
+		ca.localImplToRemoteIfcHistograms.
+			WithLabelValues(lastClientWrite).
+			Observe(tAfter.Sub(att.Writes.GetServerWriteTimeUnwrapped(netv1a1.NASectionImpl)).Seconds())
+	}
 	ca.remoteAttachmentsGauge.Inc()
 
 	return ifc, nil

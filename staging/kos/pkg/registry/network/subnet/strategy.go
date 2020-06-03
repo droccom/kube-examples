@@ -150,11 +150,11 @@ func (ss *subnetStrategy) Validate(ctx context.Context, obj runtime.Object) fiel
 func (ss *subnetStrategy) checkNSAndCIDRConflicts(candidate *subnet.Summary) (errs field.ErrorList) {
 	potentialRivals, err := ss.subnetIndexer.ByIndex(subnetVNIIndex, strconv.FormatUint(uint64(candidate.VNI), 10))
 	if err != nil {
-		klog.Errorf("subnetIndexer.ByIndex failed for index %s and vni %d: %s", subnetVNIIndex, candidate.VNI, err.Error())
+		klog.Errorf("subnetIndexer.ByIndex failed for index %s and VNI %06x: %s", subnetVNIIndex, candidate.VNI, err.Error())
 		errs = field.ErrorList{field.InternalError(field.NewPath("spec", "vni"), errors.New("failed to retrieve other subnets with same vni"))}
 		return
 	}
-	klog.V(5).Infof("Found %d subnets with vni %d", len(potentialRivals), candidate.VNI)
+	klog.V(5).Infof("Found %d subnets with VNI %06x", len(potentialRivals), candidate.VNI)
 	// Check whether there are Namespace and CIDR conflicts with other subnets.
 	for _, potentialRival := range potentialRivals {
 		pr, err := subnet.NewSummary(potentialRival)
