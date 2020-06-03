@@ -392,13 +392,11 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 				glog.Infof("NetworkAttachment.Status.IPv4 is not in range: attachment=%s/%s, VNI=%06x, subnet=%s, node=%s, ipv4=%s\n", theKubeNS, natt.Name, virtNet.ID, natt.Spec.Subnet, natt.Spec.Node, natt.Status.IPv4)
 			}
 		}
-		virtNet.ipAddressChanged(slot, slot.currentNodeName, oldIPv4, natt.Status.IPv4, slot.currentAttachmentName)
+		virtNet.ipAddressChanged(slot.currentNodeName, oldIPv4, natt.Status.IPv4, slot.currentAttachmentName)
 	}
-	if natt.Status.IPv4 != "" {
-		if slot.addressedTime == (time.Time{}) {
-			slot.addressedTime = now
-			slot.addressContention = natt.Status.AddressContention
-		}
+	if natt.Status.IPv4 != "" && slot.addressedTime == (time.Time{}) {
+		slot.addressedTime = now
+		slot.addressContention = natt.Status.AddressContention
 	}
 	if natt.Status.IfcName != "" {
 		if slot.readyTime == (time.Time{}) {
@@ -418,12 +416,10 @@ func (slot *Slot) observeState(virtNet *VirtNet, slotIndex int, natt *netv1a1.Ne
 			slot.testES = cr.ExitStatus
 			complaints := uint(strings.Count(cr.StdOut, "Invalid")) + uint(strings.Count(cr.StdErr, "Invalid"))
 			slot.testLgComplaints = bits.Len(complaints) - 1
-			if cr.ExitStatus != 0 {
-				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complaints=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complaints, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
-			}
 			if slot.testES == 0 {
 				cd.NoteTested(slotIndex)
 			} else {
+				glog.Infof("Non-zero test exit status: attachment=%s/%s, VNI=%06x, subnet=%s, RV=%s, node=%s, IPv4=%s, MAC=%s, testES=%d, complaints=%d, StartTime=%s, StopTime=%s, StdOut=%q, StdErr=%q\n", theKubeNS, slot.currentAttachmentName, virtNet.ID, natt.Spec.Subnet, natt.ResourceVersion, natt.Spec.Node, natt.Status.IPv4, natt.Status.MACAddress, cr.ExitStatus, complaints, cr.StartTime, cr.StopTime, cr.StdOut, cr.StdErr)
 				cd.NoteNoTest(slotIndex)
 				if *stopOnPingFail {
 					atomic.AddUint32(&stoppers, 1)
@@ -455,12 +451,12 @@ func hasBrokenIPAM(errs []string) bool {
 
 // ipAddressChanged changes the IPv4 address of a NetworkAttachment.
 // Caller may hold Slot's mutex.
-func (virtNet *VirtNet) ipAddressChanged(slot *Slot, currentNodeName, oldIPv4, newIPv4, currentAttachmentName string) {
-	virtNet.ipAddressChangedAtNode(slot, currentNodeName, oldIPv4, newIPv4, currentAttachmentName)
-	virtNet.ipAddressChangedInNS(slot, oldIPv4, newIPv4, currentAttachmentName)
+func (virtNet *VirtNet) ipAddressChanged(currentNodeName, oldIPv4, newIPv4, currentAttachmentName string) {
+	virtNet.ipAddressChangedAtNode(currentNodeName, oldIPv4, newIPv4, currentAttachmentName)
+	virtNet.ipAddressChangedInNS(oldIPv4, newIPv4, currentAttachmentName)
 }
 
-func (virtNet *VirtNet) ipAddressChangedInNS(slot *Slot, oldIPv4, newIPv4, currentAttachmentName string) {
+func (virtNet *VirtNet) ipAddressChangedInNS(oldIPv4, newIPv4, currentAttachmentName string) {
 	var warnSet string
 	virtNet.addrsMutex.Lock()
 	defer func() {
@@ -492,7 +488,7 @@ func (virtNet *VirtNet) ipAddressChangedInNS(slot *Slot, oldIPv4, newIPv4, curre
 	}
 }
 
-func (virtNet *VirtNet) ipAddressChangedAtNode(slot *Slot, currentNodeName, oldIPv4, newIPv4, currentAttachmentName string) {
+func (virtNet *VirtNet) ipAddressChangedAtNode(currentNodeName, oldIPv4, newIPv4, currentAttachmentName string) {
 	virtNet.nodeMutex.Lock()
 	defer func() { virtNet.nodeMutex.Unlock() }()
 	nd := virtNet.nodeMap[currentNodeName]
@@ -540,7 +536,7 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 		}
 	}
 	if slot.natt.Status.IPv4 != "" {
-		virtNet.ipAddressChanged(slot, slot.currentNodeName, slot.natt.Status.IPv4, "", slot.currentAttachmentName)
+		virtNet.ipAddressChanged(slot.currentNodeName, slot.natt.Status.IPv4, "", slot.currentAttachmentName)
 	}
 	if slot.readyTime != (time.Time{}) {
 		createToReadyHistogram.ObserveAt(slot.readyTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
@@ -566,7 +562,7 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 		glog.Infof("Attachment got no address: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)
 	} else if slot.readyTime == (time.Time{}) && slot.brokenTime == (time.Time{}) {
 		glog.Infof("Attachment got no state: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)
-	} else if slot.readyTime != (time.Time{}) && slot.testedTime == (time.Time{}) && !*omitTest {
+	} else if slot.readyTime != (time.Time{}) && slot.testedTime == (time.Time{}) && *testFraction > 0 {
 		glog.Infof("Attachment test did not complete: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)
 	}
 	return slot.natt
@@ -659,7 +655,6 @@ var lawBias = flag.Int("bias", 0, "bias in power law")
 var justCount = flag.Bool("estimate", false, "only characterize the network size distribution")
 var roundRobin = flag.Bool("round-robin", false, "pick Nodes round-robin")
 var singleNetwork = flag.Bool("single-network", false, "indicates whether to make only one Subnet in each VirtNet")
-var omitTest = flag.Bool("omit-test", false, "indicates whether to avoid functional testing of the created attachments")
 var testFraction = flag.Float64("test-fraction", 0.1, "fraction of non-initial attachments that are tested")
 var pendingWait = flag.Duration("pending-wait", time.Minute, "max time a thread will wait for a pending attachment to become ready")
 var pingCount = flag.Int("ping-count", 10, "number of ping requests in a full test")
@@ -724,10 +719,6 @@ func main() {
 	if *opsDistribution != steadyDistribution && *opsDistribution != poissonDistribution {
 		glog.Errorf("Got unknown distribution \"%s\" for attachments ops, only \"%s\" and \"%s\" are supported.", *opsDistribution, steadyDistribution, poissonDistribution)
 		os.Exit(6)
-	}
-
-	if *omitTest {
-		*testFraction = 0
 	}
 
 	glog.Warningf("Driver GitCommit=%q; parameters: numNets=%d, topNetSize=%d, subnetSizeFactor=%g, lawPower=%g, lawBias=%d, justCount=%v, roundRobin=%v, pendingWait=%s, testFraction=%v, pingCount=%v, stopOnPingFail=%v, singleNetwork=%v, kubeconfigPath=%q, numAttachments=%d, threads=%d, targetRate=%g, attachmentsOpsDistribution=%s, waitAfterCreate=%s, waitAfterDelete=%s, onlyNode=%q, nodeLabelSelector=%q, runID=%q\n", version.GitCommit, *numNets, *topNetSize, *subnetSizeFactor, *lawPower, *lawBias, *justCount, *roundRobin, *pendingWait, *testFraction, *pingCount, *stopOnPingFail, *singleNetwork, *kubeconfigPath, *numAttachments, *threads, *targetRate, *opsDistribution, *waitAfterCreate, *waitAfterDelete, *onlyNode, *nodeLabelSelector, *runID)
@@ -892,19 +883,17 @@ func main() {
 		}
 	}
 	distributionOutlineCSVFile.Close()
-	nneI := int(sizeSum)
+	numSlots := int(sizeSum)
 	avgPeers := squareSum / sizeSum
-	glog.Warningf("VirtNet size distribution: numSlots=%d, avgPeers=%g, breakPoint=%d\n", nneI, avgPeers, breakPoint)
+	glog.Warningf("VirtNet size distribution: numSlots=%d, avgPeers=%g, breakPoint=%d\n", numSlots, avgPeers, breakPoint)
 
 	if *justCount {
 		return
 	}
 
-	if *waitAfterCreate != 0 {
-		if *numAttachments > nneI {
-			glog.Errorf("Requested too many attachments, can not create them all without deleting: numSlots=%d, numAttachments=%d\n", nneI, *numAttachments)
-			os.Exit(27)
-		}
+	if *waitAfterCreate != 0 && *numAttachments > numSlots {
+		glog.Errorf("Requested too many attachments, can not create them all without deleting: numSlots=%d, numAttachments=%d\n", numSlots, *numAttachments)
+		os.Exit(27)
 	}
 
 	createLatencyHistogram = NewTrackingHistogram(
@@ -1056,11 +1045,11 @@ func main() {
 		createToTestedHistogram, readyToTestedHistogram, testCounts,
 		successfulCreates, failedCreates, successfulDeletes, failedDeletes)
 
-	if *threads > uint64(nneI) {
+	if *threads > uint64(numSlots) {
 		glog.Warningln("Reduced number of threads to match number of attachment slots")
-		*threads = uint64(nneI)
+		*threads = uint64(numSlots)
 	}
-	vnAttachments = make([]VirtNetAttachment, nneI)
+	vnAttachments = make([]VirtNetAttachment, numSlots)
 	k := 0
 	for i := 0; i < *numNets; i++ {
 		for j := 0; j < virtNets[i].size; j++ {
@@ -1113,7 +1102,7 @@ func main() {
 
 	var wg sync.WaitGroup
 	opPeriod := 1 / *targetRate
-	effN := nneI
+	effN := numSlots
 	if effN > *numAttachments {
 		effN = *numAttachments
 	}
@@ -1220,22 +1209,22 @@ func RunThread(kClientset *kosclientset.Clientset, stopCh <-chan struct{}, work 
 	attachmentsDirect := kClientset.NetworkV1alpha1().NetworkAttachments(theKubeNS)
 	createAllowed := true
 	for iDelete < numAttsToCreate {
+		var nextOpIdx uint64
+		if iCreate+iDelete < regularStrides {
+			nextOpIdx = (iCreate+iDelete)*numThreads + thd - 1
+		} else {
+			nextOpIdx = regularStrides*numThreads + ((iCreate+iDelete)-regularStrides)*shortStride + thd - 1
+		}
+		dt := opsTimes[nextOpIdx]
 		hadToWait := false
 		for {
-			var nextOpIdx uint64
-			if iCreate+iDelete < regularStrides {
-				nextOpIdx = (iCreate+iDelete)*numThreads + thd - 1
-			} else {
-				nextOpIdx = regularStrides*numThreads + ((iCreate+iDelete)-regularStrides)*shortStride + thd - 1
-			}
-			dt := opsTimes[nextOpIdx]
-			xd := atomic.AddInt64(&xtraDelayI, 0)
+			xd := atomic.LoadInt64(&xtraDelayI)
 			targt := tbase.Add(time.Duration(int64(dt) + xd))
 			gap := targt.Sub(time.Now())
 			if gap <= 0 {
 				if gap < 0 && !hadToWait {
 					lateOps++
-					opsDelay = -gap
+					opsDelay -= gap
 				}
 				break
 			}
