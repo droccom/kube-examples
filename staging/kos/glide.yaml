@@ -11,6 +11,9 @@ import:
   - api
   - prometheus
   - prometheus/promhttp
+- package: github.com/prometheus/client_model
+# pin the version to v0.1.0 because nothing specifies it and the latest requires `proto.ProtoPackageIsVersion3` which is not in the version of github.com/golang/protobuf/proto that is resolved here
+  version: 0.1.0
 - package: github.com/spf13/cobra
   version: ^0.0.5
 - package: github.com/wangjia184/sortedset

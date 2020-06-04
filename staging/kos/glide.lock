@@ -1,5 +1,5 @@
-hash: b65f3c575b768b078ddf617775e16a92d240281cc71ea6469b25f4f4dc460f66
-updated: 2020-06-04T17:26:35.981609-04:00
+hash: 1658ac48a24afb201893c3171272822948e779688ebcf0a5a1b96d0b909a490c
+updated: 2020-06-04T18:00:24.626627-04:00
 imports:
 - name: github.com/beorn7/perks
   version: 37c8de3658fcb183f997c4e13e8337516ab753e6
@@ -118,7 +118,7 @@ imports:
   - prometheus/internal
   - prometheus/promhttp
 - name: github.com/prometheus/client_model
-  version: 7bc5445566f0fe75b15de23e6b93886e982d7bf9
+  version: d1d2010b5beead3fa1c5f271a5cf626e40b3ad6e
   subpackages:
   - go
 - name: github.com/prometheus/common
@@ -239,35 +239,6 @@ imports:
   - status
   - tap
   - transport
-- name: google.golang.org/protobuf
-  version: 69839c78c3baff8f1fb37f37b24127ecae185e03
-  subpackages:
-  - encoding/prototext
-  - encoding/protowire
-  - internal/descfmt
-  - internal/descopts
-  - internal/detrand
-  - internal/encoding/defval
-  - internal/encoding/messageset
-  - internal/encoding/tag
-  - internal/encoding/text
-  - internal/errors
-  - internal/fieldsort
-  - internal/filedesc
-  - internal/filetype
-  - internal/flags
-  - internal/genid
-  - internal/impl
-  - internal/mapsort
-  - internal/pragma
-  - internal/set
-  - internal/strs
-  - internal/version
-  - proto
-  - reflect/protoreflect
-  - reflect/protoregistry
-  - runtime/protoiface
-  - runtime/protoimpl
 - name: gopkg.in/inf.v0
   version: 3887ee99ecf07df5b447e9b00d9c0b2adaa9f3e4
 - name: gopkg.in/natefinch/lumberjack.v2
