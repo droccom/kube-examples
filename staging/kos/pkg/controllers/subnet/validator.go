@@ -112,8 +112,8 @@ func setupPrometheusMetrics() {
 		},
 		[]string{"statusErr"})
 	errValT, errValF := FormatErrVal(true), FormatErrVal(false)
-	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValT})
-	subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": errValF})
+	subnetCreateToValidatedHistograms.WithLabelValues(errValT)
+	subnetCreateToValidatedHistograms.WithLabelValues(errValF)
 
 	subnetUpdateHistograms = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -124,10 +124,10 @@ func setupPrometheusMetrics() {
 			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
 		},
 		[]string{"err", "statusErr"})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValT})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValT})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValT, "statusErr": errValF})
-	subnetUpdateHistograms.With(prometheus.Labels{"err": errValF, "statusErr": errValF})
+	subnetUpdateHistograms.WithLabelValues(errValT, errValT)
+	subnetUpdateHistograms.WithLabelValues(errValF, errValT)
+	subnetUpdateHistograms.WithLabelValues(errValT, errValF)
+	subnetUpdateHistograms.WithLabelValues(errValF, errValF)
 
 	liveListHistograms = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -138,8 +138,8 @@ func setupPrometheusMetrics() {
 			Buckets:   []float64{-0.125, 0, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64},
 		},
 		[]string{"err"})
-	liveListHistograms.With(prometheus.Labels{"err": errValT})
-	liveListHistograms.With(prometheus.Labels{"err": errValF})
+	liveListHistograms.WithLabelValues(errValT)
+	liveListHistograms.WithLabelValues(errValF)
 
 	liveListResultLengthHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -174,8 +174,8 @@ func setupPrometheusMetrics() {
 			Help:      "Number of times processing of a subnet stopped because of a mismatch between the subnet from the API server and the one associated with the conflicts cache.",
 		},
 		[]string{"mismatch_type"})
-	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": missingCacheMismatch})
-	cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": cacheOwnerMismatch})
+	cacheVsLiveSubnetMismatches.WithLabelValues(missingCacheMismatch)
+	cacheVsLiveSubnetMismatches.WithLabelValues(cacheOwnerMismatch)
 
 	workerCount = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -434,7 +434,7 @@ func (v *Validator) processExistingSubnet(s *netv1a1.Subnet) error {
 		FieldSelector: k8sfields.OneTermEqualSelector(subnetVNIField, strconv.FormatUint(uint64(ss.VNI), 10)).String(),
 	})
 	tAfter := time.Now()
-	liveListHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil)}).Observe(tAfter.Sub(tBefore).Seconds())
+	liveListHistograms.WithLabelValues(FormatErrVal(err != nil)).Observe(tAfter.Sub(tBefore).Seconds())
 	liveListResultLengthHistogram.Observe(float64(len(potentialRivals.Items)))
 	if err != nil {
 		if malformedRequest(err) {
@@ -587,7 +587,9 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 	tBefore := time.Now()
 	s3, err := v.netIfc.Subnets(s2.Namespace).UpdateStatus(s2)
 	tAfter := time.Now()
-	subnetUpdateHistograms.With(prometheus.Labels{"err": FormatErrVal(err != nil), "statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(tBefore).Seconds())
+	subnetUpdateHistograms.
+		WithLabelValues(FormatErrVal(err != nil), FormatErrVal(len(validationErrors) > 0)).
+		Observe(tAfter.Sub(tBefore).Seconds())
 	switch {
 	case err == nil:
 		nsn := k8stypes.NamespacedName{
@@ -597,7 +599,9 @@ func (v *Validator) updateSubnetValidity(s1 *netv1a1.Subnet, validationErrors []
 		klog.V(4).Infof("Recorded errors=%s and validated=%t into %s's status.", validationErrors, s2.Status.Validated, nsn)
 		v.updateStaleRV(nsn, s1.ResourceVersion)
 		if !s1.Status.Validated && len(s1.Status.Errors) == 0 {
-			subnetCreateToValidatedHistograms.With(prometheus.Labels{"statusErr": FormatErrVal(len(validationErrors) > 0)}).Observe(tAfter.Sub(s1.CreationTimestamp.Time).Seconds())
+			subnetCreateToValidatedHistograms.
+				WithLabelValues(FormatErrVal(len(validationErrors) > 0)).
+				Observe(tAfter.Sub(s1.CreationTimestamp.Time).Seconds())
 		}
 		if validated {
 			v.eventRecorder.Event(s3, k8scorev1api.EventTypeNormal, "SubnetValidated", "")
@@ -620,7 +624,7 @@ func (v *Validator) recordConflict(enrollerNSN, enrolleeNSN k8stypes.NamespacedN
 	defer func() {
 		v.conflictsMutex.Unlock()
 		if mismatchType != "" {
-			cacheVsLiveSubnetMismatches.With(prometheus.Labels{"mismatch_type": mismatchType}).Inc()
+			cacheVsLiveSubnetMismatches.WithLabelValues(mismatchType).Inc()
 		}
 	}()
 

@@ -25,8 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	k8smetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
@@ -108,8 +106,12 @@ func (c *ConnectionAgent) runCommand(attNSN k8stypes.NamespacedName, ifc netfabr
 	}
 	exitStatusStr := strconv.FormatInt(int64(cr.ExitStatus), 10)
 	lgComplaintsStr := strconv.FormatInt(int64(bits.Len(complaints)-1), 10)
-	c.attachmentExecDurationHistograms.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Observe(stopTime.Sub(startTime).Seconds())
-	c.attachmentExecStatusCounts.With(prometheus.Labels{"what": what, "exitStatus": exitStatusStr, "lgComplaints": lgComplaintsStr}).Inc()
+	c.attachmentExecDurationHistograms.
+		WithLabelValues(what, exitStatusStr, lgComplaintsStr).
+		Observe(stopTime.Sub(startTime).Seconds())
+	c.attachmentExecStatusCounts.
+		WithLabelValues(what, exitStatusStr, lgComplaintsStr).
+		Inc()
 	klog.V(4).Infof("Exec report: att=%s, vni=%06x, ipv4=%s, ifcName=%s, mac=%s, what=%s, report=%#+v", attNSN, ifc.VNI, ifc.GuestIP, ifc.Name, ifc.GuestMAC, what, cr)
 	if setExecReport != nil {
 		setExecReport(cr)

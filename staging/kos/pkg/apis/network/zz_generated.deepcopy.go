@@ -265,6 +265,7 @@ func (in *NetworkAttachmentSpec) DeepCopy() *NetworkAttachmentSpec {
 func (in *NetworkAttachmentStatus) DeepCopyInto(out *NetworkAttachmentStatus) {
 	*out = *in
 	in.Errors.DeepCopyInto(&out.Errors)
+	in.SubnetCreationTime.DeepCopyInto(&out.SubnetCreationTime)
 	if in.PostCreateExecReport != nil {
 		in, out := &in.PostCreateExecReport, &out.PostCreateExecReport
 		*out = new(ExecReport)

@@ -556,7 +556,7 @@ func (slot *Slot) close(VNI uint32, nsName string) *netv1a1.NetworkAttachment {
 		}
 		c2t.ObserveAt(slot.testedTime.Sub(slot.preCreateTime).Seconds(), nsName, slot.natt.Name)
 		r2t.ObserveAt(slot.testedTime.Sub(slot.readyTime).Seconds(), nsName, slot.natt.Name)
-		testCounts.With(prometheus.Labels{esLabel: strconv.FormatInt(int64(slot.testES), 10), lgComplaintsLabel: strconv.FormatInt(int64(slot.testLgComplaints), 10), fullLabel: strconv.FormatBool(slot.fullTest)}).Inc()
+		testCounts.WithLabelValues(strconv.FormatInt(int64(slot.testES), 10), strconv.FormatInt(int64(slot.testLgComplaints), 10), strconv.FormatBool(slot.fullTest)).Inc()
 	}
 	if slot.addressedTime == (time.Time{}) {
 		glog.Infof("Attachment got no address: attachment=%s/%s, VNI=%06x, node=%s\n", nsName, slot.currentAttachmentName, VNI, slot.currentNodeName)

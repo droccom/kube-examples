@@ -221,39 +221,44 @@ type NetworkAttachmentStatus struct {
 	// +optional
 	Errors NetworkAttachmentErrors `json:"errors,omitempty" protobuf:"bytes,1,opt,name=errors"`
 
+	// SubnetCreationTime is the API server write time of the SubnetSectionSpec
+	// of the subnet identified by NetworkAttachmentSpec.Subnet.
+	// +optional
+	SubnetCreationTime metav1.MicroTime `json:"subnetCreationTime,omitempty" protobuf:"bytes,2,opt,name=subnetCreationTime"`
+
 	// AddressContention indicates whether the address assignment was
 	// delayed due to not enough addresses being available at first.
-	AddressContention bool `json:"addressDelayed,omitempty" protbuf:"bytes,9,opt,name=addressDelayed"`
+	AddressContention bool `json:"addressContention,omitempty" protobuf:"bytes,3,opt,name=addressContention"`
 
 	// LockUID is the UID of the IPLock object holding this attachment's
 	// IP address, or the empty string when there is no address.
 	// This field is a private detail of the implementation, not really
 	// part of the public API.
 	// +optional
-	LockUID string `json:"lockUID,omitempty" protobuf:"bytes,2,opt,name=lockUID"`
+	LockUID string `json:"lockUID,omitempty" protobuf:"bytes,4,opt,name=lockUID"`
 
 	// AddressVNI is the VNI associated with this attachment's
 	// IP address assignment, or the empty string when there is no address.
 	// +optional
-	AddressVNI uint32 `json:"addressVNI,omitempty" protobuf:"bytes,3,opt,name=addressVNI"`
+	AddressVNI uint32 `json:"addressVNI,omitempty" protobuf:"bytes,5,opt,name=addressVNI"`
 
 	// IPv4 is non-empty when an address has been assigned.
 	// +optional
-	IPv4 string `json:"ipv4,omitempty" protobuf:"bytes,4,opt,name=ipv4"`
+	IPv4 string `json:"ipv4,omitempty" protobuf:"bytes,6,opt,name=ipv4"`
 
 	// MACAddress is non-empty while there is a corresponding Linux
 	// network interface on the host.
 	// +optional
-	MACAddress string `json:"macAddress,omitempty" protobuf:"bytes,5,opt,name=macAddress"`
+	MACAddress string `json:"macAddress,omitempty" protobuf:"bytes,7,opt,name=macAddress"`
 
 	// IfcName is the name of the network interface that implements this
 	// attachment on its node, or the empty string to indicate no
 	// implementation.
 	// +optional
-	IfcName string `json:"ifcName,omitempty" protobuf:"bytes,6,opt,name=ifcname"`
+	IfcName string `json:"ifcName,omitempty" protobuf:"bytes,8,opt,name=ifcname"`
 	// HostIP is the IP address of the node the attachment is bound to.
 	// +optional
-	HostIP string `json:"hostIP,omitempty" protobuf:"bytes,7,opt,name=hostIP"`
+	HostIP string `json:"hostIP,omitempty" protobuf:"bytes,9,opt,name=hostIP"`
 
 	// PostCreateExecReport, if non-nil, reports on the run of the
 	// PostCreateExec that was launched when the Linux network
@@ -266,7 +271,7 @@ type NetworkAttachmentStatus struct {
 	// PostCreateExec of the attachment for whom the Linux network
 	// interface was first created.
 	// +optional
-	PostCreateExecReport *ExecReport `json:"postCreateExecReport,omitempty" protobuf:"bytes,8,opt,name=postCreateExecReport"`
+	PostCreateExecReport *ExecReport `json:"postCreateExecReport,omitempty" protobuf:"bytes,10,opt,name=postCreateExecReport"`
 }
 
 type NetworkAttachmentErrors struct {
