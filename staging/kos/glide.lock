@@ -1,8 +1,8 @@
 hash: b65f3c575b768b078ddf617775e16a92d240281cc71ea6469b25f4f4dc460f66
-updated: 2019-07-20T16:55:27.198655-04:00
+updated: 2020-06-04T17:26:35.981609-04:00
 imports:
 - name: github.com/beorn7/perks
-  version: 3ac7bf7a47d159a033b107610db8a1b6575507a4
+  version: 37c8de3658fcb183f997c4e13e8337516ab753e6
   subpackages:
   - quantile
 - name: github.com/coreos/etcd
@@ -46,7 +46,7 @@ imports:
   - protoc-gen-gogo/descriptor
   - sortkeys
 - name: github.com/golang/glog
-  version: 44145f04b68cf362d9c4df2182967c2275eaefed
+  version: 23def4e6c14b4da8ac2ed8007337bc5eb5007998
 - name: github.com/golang/groupcache
   version: 02826c3e79038b59d737d3b1c0a1d937f71a4433
   subpackages:
@@ -63,6 +63,7 @@ imports:
   version: 6f77996f0c42f7b84e5a2b252227263f93432e9b
   subpackages:
   - cmp
+  - cmp/cmpopts
   - cmp/internal/diff
   - cmp/internal/flags
   - cmp/internal/function
@@ -117,7 +118,7 @@ imports:
   - prometheus/internal
   - prometheus/promhttp
 - name: github.com/prometheus/client_model
-  version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
+  version: 7bc5445566f0fe75b15de23e6b93886e982d7bf9
   subpackages:
   - go
 - name: github.com/prometheus/common
@@ -135,17 +136,17 @@ imports:
 - name: github.com/PuerkitoBio/urlesc
   version: de5bf2ad457846296e2031421a34e2568e304e35
 - name: github.com/spf13/cobra
-  version: f2b07da1e2c38d5f12845a4f607e2e1018cbb1f5
+  version: 6607e6b8603f56adb027298ee6695e06ffb3a819
 - name: github.com/spf13/pflag
   version: 583c0c0531f06d5278b7d917446061adc344b5cd
 - name: github.com/wangjia184/sortedset
-  version: f5d03557ba30bb7487f8e2783957af99d19624e1
+  version: 080872f546ba56217d5f3f5013da07e61ee16965
 - name: golang.org/x/crypto
   version: e84da0312774c21d64ee2317962ef669b27ffb41
   subpackages:
   - ssh/terminal
 - name: golang.org/x/net
-  version: 65e2d4e15006aab9813ff8769e768bbf4bb667a0
+  version: cdfb69ac37fc6fa907650654115ebebb3aae2087
   subpackages:
   - context
   - context/ctxhttp
@@ -238,14 +239,43 @@ imports:
   - status
   - tap
   - transport
+- name: google.golang.org/protobuf
+  version: 69839c78c3baff8f1fb37f37b24127ecae185e03
+  subpackages:
+  - encoding/prototext
+  - encoding/protowire
+  - internal/descfmt
+  - internal/descopts
+  - internal/detrand
+  - internal/encoding/defval
+  - internal/encoding/messageset
+  - internal/encoding/tag
+  - internal/encoding/text
+  - internal/errors
+  - internal/fieldsort
+  - internal/filedesc
+  - internal/filetype
+  - internal/flags
+  - internal/genid
+  - internal/impl
+  - internal/mapsort
+  - internal/pragma
+  - internal/set
+  - internal/strs
+  - internal/version
+  - proto
+  - reflect/protoreflect
+  - reflect/protoregistry
+  - runtime/protoiface
+  - runtime/protoimpl
 - name: gopkg.in/inf.v0
   version: 3887ee99ecf07df5b447e9b00d9c0b2adaa9f3e4
 - name: gopkg.in/natefinch/lumberjack.v2
   version: 20b71e5b60d756d3d2f80def009790325acc2b23
 - name: gopkg.in/yaml.v2
-  version: 5420a8b6744d3b0345ab293f6fcba19c978f1183
+  version: 53403b58ad1b561927d19068c655246f2db79d48
 - name: k8s.io/api
-  version: 1634385ce4626e4da21367d139c4ee5d72437e3b
+  version: e3a917c59b045a781a95672a2bd468de5da5bc78
   subpackages:
   - admission/v1beta1
   - admissionregistration/v1beta1
@@ -285,7 +315,7 @@ imports:
   - storage/v1alpha1
   - storage/v1beta1
 - name: k8s.io/apimachinery
-  version: 1799e75a07195de9460b8ef7300883499f12127b
+  version: 6e7c4b1e1854abaeb159e69f0ce3f0a931cb6d31
   subpackages:
   - pkg/api/apitesting
   - pkg/api/apitesting/fuzzer
@@ -342,7 +372,7 @@ imports:
   - third_party/forked/golang/json
   - third_party/forked/golang/reflect
 - name: k8s.io/apiserver
-  version: 07da2c5601ffacb40aecb4ad92adea2c775d1dd9
+  version: 78eb7668314c03f5d251cea283bad75b22287d5b
   subpackages:
   - pkg/admission
   - pkg/admission/configuration
@@ -441,7 +471,7 @@ imports:
   - plugin/pkg/authenticator/token/webhook
   - plugin/pkg/authorizer/webhook
 - name: k8s.io/client-go
-  version: e4cdb82809fc633fe1c8deb9ad52f201a6bf1470
+  version: 75e09fce8f36431d893f24bf540f7276585844f9
   subpackages:
   - discovery
   - discovery/fake
@@ -597,13 +627,13 @@ imports:
 - name: k8s.io/code-generator
   version: 18da4a14b22b17d2fa761e50037fabfbacec225b
 - name: k8s.io/component-base
-  version: 44ae6873ad4b0e7e6b7d93706255b6bd817a8717
+  version: 6d0e514d4f25c9459066d4614fd4668872080f6f
   subpackages:
   - cli/flag
   - featuregate
   - logs
 - name: k8s.io/gengo
-  version: e17681d19d3ac4837a019ece36c2a0ec31ffe985
+  version: fb547a11e5e09bfeff19d7a38492100a554fa242
   subpackages:
   - args
 - name: k8s.io/klog
@@ -634,20 +664,23 @@ imports:
 - name: sigs.k8s.io/yaml
   version: fd68e9863619f6ec2fdd8625fe1f02e7c877e480
 testImports:
-- name: github.com/hpcloud/tail
-  version: a30252cb686a21eb2d0b98132633053ec2f7f1e5
+- name: github.com/fsnotify/fsnotify
+  version: c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9
+- name: github.com/nxadm/tail
+  version: 327c577245448d8192115e77a76ea3d6aee88202
   subpackages:
   - ratelimiter
   - util
   - watch
   - winfile
 - name: github.com/onsi/ginkgo
-  version: eea6ad008b96acdaa524f5b409513bf062b500ad
+  version: 9bef594084d663dc2c58c2874b5d2edf06071744
   subpackages:
   - config
   - internal/codelocation
   - internal/containernode
   - internal/failer
+  - internal/global
   - internal/leafnodes
   - internal/remote
   - internal/spec
@@ -662,7 +695,7 @@ testImports:
   - reporters/stenographer/support/go-isatty
   - types
 - name: github.com/onsi/gomega
-  version: 90e289841c1ed79b7a598a7cd9959750cb5e89e2
+  version: 904ac6ab26e9a888bdff3467eea03b6122a1c027
   subpackages:
   - format
   - internal/assertion
@@ -675,7 +708,9 @@ testImports:
   - matchers/support/goraph/node
   - matchers/support/goraph/util
   - types
-- name: gopkg.in/fsnotify.v1
-  version: c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9
+- name: golang.org/x/xerrors
+  version: 9bdfabe68543c54f90421aeb9a60ef8061b5b544
+  subpackages:
+  - internal
 - name: gopkg.in/tomb.v1
   version: dd632973f1e7218eb1089048e0798ec9ae7dceb8
