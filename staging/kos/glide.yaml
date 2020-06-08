@@ -70,9 +70,12 @@ import:
   subpackages:
   - pkg/common
 - package: k8s.io/gengo
+  # Pin this commit because it's the last w/o klog/v2 and we're not ready for the switch to klog/v2 yet.
+  version: e0e292d8aa122d458174e1bef5f142b4d0a67a05
   subpackages:
   - args
 - package: k8s.io/klog
+  # When we switch to klog/v2, remove the pin on the commit of k8s.io/gengo.
   version: ~0.3.3
 
 # sample-apiserver main now use k8s.io/component-base, and we follow suit
