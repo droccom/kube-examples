@@ -143,8 +143,23 @@ func (o *NetworkAPIServerOptions) Config() (*apiserver.Config, error) {
 
 func (o NetworkAPIServerOptions) RunNetworkAPIServer(stopCh <-chan struct{}) error {
 	config, err := o.Config()
+
+	storageFactoryConfig := apiserver.NewStorageFactoryConfig()
+	storageFactoryConfig.APIResourceConfig = config.GenericConfig.MergedResourceConfig
+	completedStorageFactoryConfig, err := storageFactoryConfig.Complete(o.RecommendedOptions.Etcd)
 	if err != nil {
 		return err
+	}
+	storageFactory, err := completedStorageFactoryConfig.New()
+	if err != nil {
+		return err
+	}
+	// MD commented out
+	// if config.GenericConfig.Config != nil {
+	// 	storageFactory.StorageConfig.Transport.EgressLookup = genericConfig.EgressSelector.Lookup
+	// }
+	if err = o.RecommendedOptions.Etcd.ApplyWithStorageFactoryTo(storageFactory, &config.GenericConfig.Config); err != nil {
+		return nil
 	}
 
 	server, err := config.Complete().New()
